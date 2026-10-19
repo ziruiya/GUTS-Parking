@@ -191,6 +191,9 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   assert.match(html, /id="manage-classes-button"/);
   assert.match(html, /id="manage-assessment-button"/);
   assert.match(html, /id="manage-damage-types-button"/);
+  assert.match(html, /<form id="add-employee-form"[\s\S]*?name="username"[\s\S]*?name="password" type="password" required minlength="12"/);
+  assert.match(html, /id="manage-employees-button"/);
+  assert.doesNotMatch(html, /パスワード再発行/);
   const phoneLayout = stylesheet.slice(stylesheet.indexOf("@media (max-width: 560px)"));
   assert.match(phoneLayout, /\.parking-grid\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(phoneLayout, /\.lot-card\s*\{\s*width:\s*100%;\s*max-width:\s*100%/);
@@ -270,13 +273,20 @@ test("logs in with hashed credentials and seeds thirteen peer locations", async 
   assert.deepEqual(bootstrap.body.vehicles, []);
 });
 
-test("admins create, reset, list and delete employee accounts without exposing stored passwords", async () => {
+test("admins create and change employee passwords while protecting credentials and sessions", async () => {
   assert.equal((await request(server).get("/api/employees")).status, 401);
   assert.equal((await request(server).get("/api/export/mariadb")).status, 401);
-  const created = await agent.post("/api/employees").send({ username: "managed-staff" });
+  assert.equal((await agent.post("/api/employees").send({
+    username: "short-password-staff",
+    password: "too-short",
+  })).status, 422);
+  const created = await agent.post("/api/employees").send({
+    username: "managed-staff",
+    password: "employee-initial-password",
+  });
   assert.equal(created.status, 201);
   assert.equal(created.body.employee.username, "managed-staff");
-  assert.match(created.body.password, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(Object.hasOwn(created.body, "password"), false);
   assert.equal(Object.hasOwn(created.body.employee, "password_hash"), false);
 
   const employees = await agent.get("/api/employees");
@@ -287,7 +297,7 @@ test("admins create, reset, list and delete employee accounts without exposing s
   const employeeAgent = request.agent(server);
   const login = await employeeAgent.post("/api/login").send({
     username: created.body.employee.username,
-    password: created.body.password,
+    password: "employee-initial-password",
   });
   assert.equal(login.status, 200);
   assert.equal(login.body.can_manage, false);
@@ -295,17 +305,22 @@ test("admins create, reset, list and delete employee accounts without exposing s
   assert.equal((await employeeAgent.get("/api/export/mariadb")).status, 403);
   assert.equal((await employeeAgent.post("/api/employees").send({ username: "staff-forbidden" })).status, 403);
 
-  const reset = await agent.patch(`/api/employees/${created.body.employee.id}/password`).send({});
+  assert.equal((await agent.patch(`/api/employees/${created.body.employee.id}/password`).send({
+    password: "short",
+  })).status, 422);
+  const reset = await agent.patch(`/api/employees/${created.body.employee.id}/password`).send({
+    password: "employee-updated-password",
+  });
   assert.equal(reset.status, 200);
-  assert.notEqual(reset.body.password, created.body.password);
+  assert.equal(Object.hasOwn(reset.body, "password"), false);
   assert.deepEqual((await employeeAgent.get("/api/me")).body, { authenticated: false, version: appVersion });
   assert.equal((await employeeAgent.post("/api/login").send({
     username: created.body.employee.username,
-    password: created.body.password,
+    password: "employee-initial-password",
   })).status, 401);
   assert.equal((await employeeAgent.post("/api/login").send({
     username: created.body.employee.username,
-    password: reset.body.password,
+    password: "employee-updated-password",
   })).status, 200);
 
   assert.equal((await agent.delete(`/api/employees/${created.body.employee.id}`)).status, 204);

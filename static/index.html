@@ -108,7 +108,7 @@
       </div>
       <div class="admin-grid">
         <button id="manage-logistics-button" class="admin-card" type="button"><b>店舗・距離</b><span>店舗と駐車場までの所要時間</span></button>
-        <button id="manage-employees-button" class="admin-card" type="button"><b>従業員アカウント</b><span>作成・パスワード再発行・削除</span></button>
+        <button id="manage-employees-button" class="admin-card" type="button"><b>従業員アカウント</b><span>作成・パスワード変更・削除</span></button>
         <button id="export-vehicles-button" class="admin-card" type="button"><b>車両データをエクスポート</b><span>MariaDB 移行用 JSON をダウンロード（認証情報は含みません）</span></button>
         <button id="manage-franchises-button" class="admin-card" type="button" hidden><b>加盟店・アカウント</b><span>加盟店と管理者アカウントの作成</span></button>
       </div>
@@ -123,9 +123,9 @@
       </div>
       <form id="add-employee-form" class="add-employee-form">
         <label>ユーザー名<input name="username" required maxlength="80" autocomplete="off"></label>
+        <label>パスワード<input name="password" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label>
         <button type="submit" class="primary-button">従業員を作成</button>
       </form>
-      <div id="employee-credential" class="employee-credential" hidden aria-live="polite"></div>
       <h3>登録済み従業員</h3>
       <div id="employee-list" class="employee-list"></div>
       <p id="employee-error" class="error-message" role="alert"></p>

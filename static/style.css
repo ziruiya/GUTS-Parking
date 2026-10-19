@@ -267,9 +267,10 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .employee-row span { color: var(--muted); font-size: 10px; }
 .employee-row-actions { display: flex; flex: none; gap: 6px; }
 .employee-row-actions button { padding: 7px 9px; font-size: 10px; }
-.employee-credential { display: grid; justify-items: start; gap: 8px; margin: 14px 0; padding: 12px 14px; border: 1px solid #99d5d7; border-radius: 9px; background: #eefafa; }
-.employee-credential p { margin: 0; color: #24565b; font-size: 12px; line-height: 1.5; }
-.employee-credential code { overflow-wrap: anywhere; color: #153b40; font-size: 14px; user-select: all; }
+.employee-password-form { display: flex; grid-column: 1 / -1; align-items: end; gap: 8px; }
+.employee-password-form label { display: grid; flex: 1; gap: 5px; color: #44566f; font-size: 11px; font-weight: 650; }
+.employee-password-form input { width: 100%; min-width: 0; border: 1px solid #d9e2e9; border-radius: 8px; padding: 8px 10px; background: #fff; color: var(--ink); }
+.employee-password-form button { padding: 8px 10px; font-size: 10px; }
 .add-assessment-field-form, .add-damage-type-form { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(110px, .7fr) minmax(90px, .6fr) auto; align-items: flex-end; gap: 7px; padding-top: 11px; border-top: 1px solid #edf0f4; }
 .add-assessment-field-form label, .add-damage-type-form label { display: grid; gap: 5px; min-width: 0; color: #44566f; font-size: 11px; font-weight: 650; }
 .add-assessment-field-form input, .add-assessment-field-form select, .add-damage-type-form input:not([type="color"]) { width: 100%; min-width: 0; border: 1px solid #d9e2e9; border-radius: 7px; padding: 8px; color: var(--ink); }
@@ -450,6 +451,7 @@ dialog > :is(form, div):first-child { padding-top: 0; }
   .admin-panel, .logistics-form { padding: 0 16px 18px; }
   .employee-manager { padding: 0 16px 18px; }
   .add-employee-form, .employee-row { align-items: stretch; flex-direction: column; }
+  .employee-password-form { align-items: stretch; flex-direction: column; }
   .employee-row-actions { flex-wrap: wrap; }
   .employee-row-actions button { flex: 1; }
   .location-extra { grid-template-columns: 1fr 1fr; }

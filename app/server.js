@@ -1,5 +1,4 @@
 const http = require("node:http");
-const { randomBytes } = require("node:crypto");
 const path = require("node:path");
 require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 const express = require("express");
@@ -665,21 +664,20 @@ function createApplication(options = {}) {
 
   app.post("/api/employees", requireUser, requireAdmin, requireSameOrigin, async (request, response, next) => {
     const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
-    if (!username || username.length > 80) {
-      return response.status(422).json({ detail: "ユーザー名は1〜80文字で入力してください。" });
+    const password = request.body?.password;
+    if (!username || username.length > 80 ||
+        typeof password !== "string" || password.length < 12 || password.length > 1024) {
+      return response.status(422).json({ detail: "ユーザー名は1〜80文字、パスワードは12〜1024文字で入力してください。" });
     }
-    const password = randomBytes(18).toString("base64url");
     try {
       const passwordHash = await hashPassword(password);
       const result = db.prepare(`
         INSERT INTO users (username, password_hash, role, tenant_id)
         VALUES (?, ?, 'operator', ?)
       `).run(username, passwordHash, request.tenantId);
-      response.set("Cache-Control", "no-store");
       response.status(201).json({
         employee: db.prepare("SELECT id, username, created_at FROM users WHERE id = ?")
           .get(result.lastInsertRowid),
-        password,
       });
     } catch (error) {
       if (isUniqueConstraint(error)) {
@@ -701,7 +699,10 @@ function createApplication(options = {}) {
         WHERE id = ? AND tenant_id = ? AND role = 'operator'
       `).get(employeeId, request.tenantId);
       if (!employee) return response.status(404).json({ detail: "従業員アカウントが見つかりません。" });
-      const password = randomBytes(18).toString("base64url");
+      const password = request.body?.password;
+      if (typeof password !== "string" || password.length < 12 || password.length > 1024) {
+        return response.status(422).json({ detail: "パスワードは12〜1024文字で入力してください。" });
+      }
       try {
         const passwordHash = await hashPassword(password);
         db.exec("BEGIN IMMEDIATE");
@@ -721,8 +722,7 @@ function createApplication(options = {}) {
           throw error;
         }
         realtime.closeUser(employee.username, 4005, "Password reset");
-        response.set("Cache-Control", "no-store");
-        response.json({ employee: { id: employee.id, username: employee.username }, password });
+        response.json({ employee: { id: employee.id, username: employee.username } });
       } catch (error) {
         next(error);
       }

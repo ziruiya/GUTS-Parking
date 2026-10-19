@@ -1802,30 +1802,6 @@
     franchiseDialog.showModal();
   }
 
-  function showEmployeeCredential(employee, password) {
-    const output = document.querySelector("#employee-credential");
-    output.replaceChildren();
-    const message = document.createElement("p");
-    message.textContent = `「${employee.username}」の初期パスワードです。安全な方法で本人に渡してください。この画面を閉じると再表示できません。`;
-    const credential = document.createElement("code");
-    credential.textContent = password;
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "quiet-button";
-    copy.textContent = "パスワードをコピー";
-    copy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(password);
-        copy.textContent = "コピーしました";
-      } catch (error) {
-        employeeError.textContent = `コピーできませんでした。表示中のパスワードを手動でコピーしてください。${error.message ? ` (${error.message})` : ""}`;
-      }
-    });
-    output.append(message, credential, copy);
-    output.hidden = false;
-    output.scrollIntoView({ block: "nearest" });
-  }
-
   async function loadEmployees() {
     const { employees } = await api("/api/employees");
     const list = document.querySelector("#employee-list");
@@ -1851,19 +1827,61 @@
       const reset = document.createElement("button");
       reset.type = "button";
       reset.className = "quiet-button";
-      reset.textContent = "パスワード再発行";
+      reset.textContent = "パスワードを変更";
       reset.addEventListener("click", async () => {
         employeeError.textContent = "";
-        if (!window.confirm(`${employee.username} のパスワードを再発行しますか？現在のログイン中セッションは終了します。`)) return;
-        reset.disabled = true;
-        try {
-          const result = await api(`/api/employees/${employee.id}/password`, { method: "PATCH", body: "{}" });
-          showEmployeeCredential(result.employee, result.password);
-        } catch (error) {
-          employeeError.textContent = error.message;
-        } finally {
-          reset.disabled = false;
+        const existingForm = row.querySelector(".employee-password-form");
+        if (existingForm) {
+          existingForm.remove();
+          reset.textContent = "パスワードを変更";
+          return;
         }
+        const form = document.createElement("form");
+        form.className = "employee-password-form";
+        const passwordLabel = document.createElement("label");
+        passwordLabel.textContent = "新しいパスワード";
+        const password = document.createElement("input");
+        password.type = "password";
+        password.name = "password";
+        password.required = true;
+        password.minLength = 12;
+        password.maxLength = 1024;
+        password.autocomplete = "new-password";
+        passwordLabel.append(password);
+        const save = document.createElement("button");
+        save.type = "submit";
+        save.className = "primary-button";
+        save.textContent = "パスワードを保存";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "quiet-button";
+        cancel.textContent = "キャンセル";
+        cancel.addEventListener("click", () => {
+          form.remove();
+          reset.textContent = "パスワードを変更";
+        });
+        form.append(passwordLabel, save, cancel);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          employeeError.textContent = "";
+          if (!form.reportValidity()) return;
+          save.disabled = true;
+          try {
+            await api(`/api/employees/${employee.id}/password`, {
+              method: "PATCH",
+              body: JSON.stringify({ password: password.value }),
+            });
+            form.remove();
+            reset.textContent = "パスワードを変更";
+            employeeError.textContent = `${employee.username} のパスワードを変更しました。`;
+          } catch (error) {
+            employeeError.textContent = error.message;
+            save.disabled = false;
+          }
+        });
+        row.append(form);
+        reset.textContent = "入力を閉じる";
+        password.focus();
       });
       const remove = document.createElement("button");
       remove.type = "button";
@@ -1875,7 +1893,6 @@
         remove.disabled = true;
         try {
           await api(`/api/employees/${employee.id}`, { method: "DELETE" });
-          document.querySelector("#employee-credential").hidden = true;
           await loadEmployees();
         } catch (error) {
           employeeError.textContent = error.message;
@@ -1891,7 +1908,6 @@
   function openEmployeeManager() {
     if (!canManage) return;
     employeeError.textContent = "";
-    document.querySelector("#employee-credential").hidden = true;
     document.querySelector("#add-employee-form").reset();
     employeeDialog.showModal();
     loadEmployees().catch((error) => { employeeError.textContent = error.message; });
@@ -2280,11 +2296,14 @@
     try {
       const result = await api("/api/employees", {
         method: "POST",
-        body: JSON.stringify({ username: form.elements.username.value }),
+        body: JSON.stringify({
+          username: form.elements.username.value,
+          password: form.elements.password.value,
+        }),
       });
       form.reset();
-      showEmployeeCredential(result.employee, result.password);
       await loadEmployees();
+      employeeError.textContent = `${result.employee.username} の従業員アカウントを作成しました。`;
     } catch (error) {
       employeeError.textContent = error.message;
     } finally {
