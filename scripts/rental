@@ -16,6 +16,7 @@ usage() {
   cat <<'EOF'
 Usage:
   rental update   Back up the database, update from origin/main, install dependencies, and restart.
+  rental backup   Create and verify a consistent SQLite backup without stopping the app.
   rental status   Show PM2 and local HTTP health status.
   rental help     Show this help.
 
@@ -44,6 +45,15 @@ restore_service_on_error() {
     restart_app || echo "Automatic restart failed. Inspect PM2 logs for $SERVICE_NAME." >&2
   fi
   exit "$exit_code"
+}
+
+backup() {
+  require_app_user
+  if [[ ! -x "$NODE_BIN" || ! -f "$APP_DIR/app/backup-db.js" ]]; then
+    echo "Rental app or Node.js was not found. Check the VPS paths." >&2
+    exit 1
+  fi
+  (cd "$APP_DIR" && "$NODE_BIN" app/backup-db.js)
 }
 
 status() {
@@ -148,6 +158,7 @@ update() {
 
 case "${1:-help}" in
   update) update ;;
+  backup) backup ;;
   status) status ;;
   help|-h|--help) usage ;;
   *)

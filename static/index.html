@@ -107,13 +107,28 @@
         <button type="button" id="close-admin-dialog" class="close-button" aria-label="閉じる">×</button>
       </div>
       <div class="admin-grid">
-        <button id="manage-classes-button" class="admin-card" type="button"><b>クラスと色</b><span>車両クラスの追加・名前・アイコン色</span></button>
         <button id="manage-logistics-button" class="admin-card" type="button"><b>店舗・距離</b><span>店舗と駐車場までの所要時間</span></button>
-        <button id="manage-options-button" class="admin-card" type="button"><b>車両オプション</b><span>ETC・禁煙などの追加・削除</span></button>
-        <button id="manage-vehicle-statuses-button" class="admin-card" type="button"><b>対応ステータス</b><span>洗車待ち・給油待ちなどの管理</span></button>
-        <button id="manage-assessment-button" class="admin-card" type="button"><b>評価項目・損傷種類</b><span>車両状態評価シートの設定</span></button>
+        <button id="manage-employees-button" class="admin-card" type="button"><b>従業員アカウント</b><span>作成・パスワード再発行・削除</span></button>
+        <button id="export-vehicles-button" class="admin-card" type="button"><b>車両データをエクスポート</b><span>MariaDB 移行用 JSON をダウンロード（認証情報は含みません）</span></button>
         <button id="manage-franchises-button" class="admin-card" type="button" hidden><b>加盟店・アカウント</b><span>加盟店と管理者アカウントの作成</span></button>
       </div>
+      <p id="admin-error" class="error-message" role="alert"></p>
+    </div>
+  </dialog>
+  <dialog id="employee-dialog">
+    <div class="employee-manager">
+      <div class="dialog-heading">
+        <div><h2>従業員アカウント</h2><p class="muted">従業員は車両の閲覧・移動・編集ができます。管理パネルと設定機能は使えません。</p></div>
+        <button type="button" id="close-employee-dialog" class="close-button" aria-label="閉じる">×</button>
+      </div>
+      <form id="add-employee-form" class="add-employee-form">
+        <label>ユーザー名<input name="username" required maxlength="80" autocomplete="off"></label>
+        <button type="submit" class="primary-button">従業員を作成</button>
+      </form>
+      <div id="employee-credential" class="employee-credential" hidden aria-live="polite"></div>
+      <h3>登録済み従業員</h3>
+      <div id="employee-list" class="employee-list"></div>
+      <p id="employee-error" class="error-message" role="alert"></p>
     </div>
   </dialog>
   <dialog id="vehicle-dialog" class="vehicle-dialog">
@@ -123,25 +138,29 @@
       <label>ナンバー<input name="plate" required maxlength="40" placeholder="例: 品川 500 あ 1234"></label>
       <div class="form-row">
         <label>クラス<select name="vehicle_type" required></select></label>
+        <button type="button" id="manage-classes-button" class="quiet-button inline-manage-button">クラスと色を管理</button>
         <p class="default-location-note">追加した車両は一番上の位置に登録されます。</p>
       </div>
       <fieldset class="option-fields">
-        <legend>オプション</legend>
+        <legend>オプション <button type="button" id="manage-options-button" class="quiet-button inline-manage-button">追加・削除</button></legend>
         <div id="vehicle-option-choices" class="status-option-list"></div>
       </fieldset>
       <fieldset class="status-fields">
-        <legend>対応ステータス</legend>
+        <legend>対応ステータス <button type="button" id="manage-vehicle-statuses-button" class="quiet-button inline-manage-button">追加・削除</button></legend>
         <div id="vehicle-status-options" class="status-option-list"></div>
       </fieldset>
       <section class="assessment-section">
         <div class="assessment-section-heading">
           <div><h3>車両状態評価シート</h3></div>
+          <button type="button" id="manage-assessment-button" class="quiet-button inline-manage-button">評価項目を管理</button>
         </div>
         <div id="assessment-fields"></div>
         <label class="assessment-notes-field">備考欄<textarea name="notes" rows="4" maxlength="5000" placeholder="車両について共有したいことを記録できます。"></textarea></label>
       </section>
       <section class="inspection-section">
-        <div><h3>車体の損傷位置</h3></div>
+        <div class="inspection-section-heading"><h3>車体の損傷位置</h3>
+          <button type="button" id="manage-damage-types-button" class="quiet-button inline-manage-button">損傷種類を管理</button>
+        </div>
         <div id="damage-type-palette" class="damage-type-palette"></div>
         <p id="inspection-hint" class="inspection-hint" aria-live="polite"></p>
         <div id="inspection-car-view" class="inspection-car-view" role="application" aria-label="ドラッグで360度回転できる3D車両モデル">

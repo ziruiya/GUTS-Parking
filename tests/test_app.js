@@ -6,9 +6,11 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
 const { after, before, test } = require("node:test");
+const { DatabaseSync } = require("node:sqlite");
 const { WebSocket } = require("ws");
 const request = require("supertest");
 const { openDatabase, seedTenantVehicleOptions } = require("../app/db");
+const { backupDatabase } = require("../app/backup-db");
 const { ErrorLogger } = require("../app/error-logger");
 const { version: appVersion } = require("../package.json");
 
@@ -55,6 +57,24 @@ after(async () => {
   }
   application?.db.close();
   fs.rmSync(errorLogDirectory, { recursive: true, force: true });
+});
+
+test("creates and verifies a consistent SQLite backup without overwriting files", async () => {
+  const source = path.join(errorLogDirectory, "backup-source.sqlite");
+  const destination = path.join(errorLogDirectory, "backup-copy.sqlite");
+  const db = new DatabaseSync(source);
+  db.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL); INSERT INTO records(value) VALUES ('preserved')");
+  db.close();
+
+  assert.equal(await backupDatabase(source, destination), destination);
+  const backupDb = new DatabaseSync(destination, { readOnly: true });
+  assert.equal(backupDb.prepare("SELECT value FROM records").get().value, "preserved");
+  assert.equal(backupDb.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  backupDb.close();
+  const existing = path.join(errorLogDirectory, "existing-backup.sqlite");
+  fs.writeFileSync(existing, "leave this file untouched");
+  await assert.rejects(backupDatabase(source, existing), /Backup already exists/);
+  assert.equal(fs.readFileSync(existing, "utf8"), "leave this file untouched");
 });
 
 test("serves the browser UI but protects vehicle data until login", async () => {
@@ -154,11 +174,12 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   assert.match(html, /<details id="status-panel" open>/);
   assert.doesNotMatch(html, /id="manage-statuses-button"/);
   assert.match(html, /id="vehicle-status-options"/);
-  assert.match(html, /id="manage-options-button"/);
-  assert.match(html, /id="manage-vehicle-statuses-button"/);
-  assert.match(html, /<dialog id="admin-dialog">[\s\S]*?id="manage-vehicle-statuses-button"[\s\S]*?<\/dialog>/);
+  assert.match(html, /<fieldset class="option-fields">[\s\S]*?id="manage-options-button"/);
+  assert.match(html, /<fieldset class="status-fields">[\s\S]*?id="manage-vehicle-statuses-button"/);
+  assert.match(html, /<dialog id="admin-dialog">[\s\S]*?id="manage-employees-button"[\s\S]*?id="export-vehicles-button"/);
+  assert.doesNotMatch(html.slice(html.indexOf('<dialog id="admin-dialog">'), html.indexOf("</dialog>")),
+    /id="manage-(?:classes|options|vehicle-statuses|assessment)-button"/);
   assert.match(html, /id="admin-panel-button"[^>]*hidden/);
-  assert.doesNotMatch(html, /<fieldset class="status-fields">[\s\S]*?id="manage-vehicle-statuses-button"[\s\S]*?<\/fieldset>/);
   assert.match(html, /車両状態評価シート/);
   assert.match(html, /<label>クラス<select name="vehicle_type" required><\/select><\/label>/);
   assert.doesNotMatch(html, /車種・タイプ/);
@@ -167,6 +188,9 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   assert.match(html, /id="inspection-car-view"[^>]*360度回転/);
   assert.match(html, /static\/inspection3d\.mjs/);
   assert.match(html, /id="assessment-manager-dialog"/);
+  assert.match(html, /id="manage-classes-button"/);
+  assert.match(html, /id="manage-assessment-button"/);
+  assert.match(html, /id="manage-damage-types-button"/);
   const phoneLayout = stylesheet.slice(stylesheet.indexOf("@media (max-width: 560px)"));
   assert.match(phoneLayout, /\.parking-grid\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(phoneLayout, /\.lot-card\s*\{\s*width:\s*100%;\s*max-width:\s*100%/);
@@ -244,6 +268,51 @@ test("logs in with hashed credentials and seeds thirteen peer locations", async 
     ["本店貸出中", "駅前店貸出中", "予備", "立駐"],
   );
   assert.deepEqual(bootstrap.body.vehicles, []);
+});
+
+test("admins create, reset, list and delete employee accounts without exposing stored passwords", async () => {
+  assert.equal((await request(server).get("/api/employees")).status, 401);
+  assert.equal((await request(server).get("/api/export/mariadb")).status, 401);
+  const created = await agent.post("/api/employees").send({ username: "managed-staff" });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.employee.username, "managed-staff");
+  assert.match(created.body.password, /^[A-Za-z0-9_-]{24}$/);
+  assert.equal(Object.hasOwn(created.body.employee, "password_hash"), false);
+
+  const employees = await agent.get("/api/employees");
+  assert.equal(employees.status, 200);
+  assert.ok(employees.body.employees.some((employee) => employee.id === created.body.employee.id));
+  assert.equal(JSON.stringify(employees.body).includes("password_hash"), false);
+
+  const employeeAgent = request.agent(server);
+  const login = await employeeAgent.post("/api/login").send({
+    username: created.body.employee.username,
+    password: created.body.password,
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.can_manage, false);
+  assert.equal((await employeeAgent.get("/api/employees")).status, 403);
+  assert.equal((await employeeAgent.get("/api/export/mariadb")).status, 403);
+  assert.equal((await employeeAgent.post("/api/employees").send({ username: "staff-forbidden" })).status, 403);
+
+  const reset = await agent.patch(`/api/employees/${created.body.employee.id}/password`).send({});
+  assert.equal(reset.status, 200);
+  assert.notEqual(reset.body.password, created.body.password);
+  assert.deepEqual((await employeeAgent.get("/api/me")).body, { authenticated: false, version: appVersion });
+  assert.equal((await employeeAgent.post("/api/login").send({
+    username: created.body.employee.username,
+    password: created.body.password,
+  })).status, 401);
+  assert.equal((await employeeAgent.post("/api/login").send({
+    username: created.body.employee.username,
+    password: reset.body.password,
+  })).status, 200);
+
+  assert.equal((await agent.delete(`/api/employees/${created.body.employee.id}`)).status, 204);
+  assert.deepEqual((await employeeAgent.get("/api/me")).body, { authenticated: false, version: appVersion });
+  assert.equal((await agent.delete(`/api/employees/${created.body.employee.id}`)).status, 404);
+  assert.equal((await agent.get("/api/employees")).body.employees
+    .some((employee) => employee.id === created.body.employee.id), false);
 });
 
 test("creates vehicles in separate positions and validates updates", async () => {
@@ -467,6 +536,25 @@ test("persists editable vehicle assessment fields and damage marks", async () =>
     .find((vehicle) => vehicle.id === vehicleId);
   assert.equal(Object.hasOwn(afterDelete.assessment_values, customField.body.id), false);
   assert.equal(afterDelete.inspection_marks.length, 1);
+});
+
+test("exports tenant vehicle data as a MariaDB migration package without credentials", async () => {
+  const response = await agent.get("/api/export/mariadb");
+  assert.equal(response.status, 200);
+  assert.match(response.headers["content-type"], /application\/json/);
+  assert.match(response.headers["content-disposition"], /guts-parking-mariadb-1-\d{4}-\d{2}-\d{2}\.json/);
+  assert.equal(response.headers["cache-control"], "no-store");
+  const exported = JSON.parse(response.text);
+  assert.equal(exported.format, "guts-parking-mariadb-export");
+  assert.equal(exported.format_version, 1);
+  assert.equal(exported.target_database, "MariaDB 10.11.10");
+  assert.equal(exported.tenant.name, "本店");
+  assert.equal(exported.tables.vehicles.find((vehicle) => vehicle.id === vehicleId).plate, "評価保持テスト");
+  assert.equal(exported.tables.vehicle_assessment_values.length > 0, true);
+  assert.equal(exported.tables.vehicle_damage_marks.length, 1);
+  assert.equal(Object.hasOwn(exported.tables, "users"), false);
+  assert.equal(Object.hasOwn(exported.tables, "sessions"), false);
+  assert.equal(response.text.includes("password_hash"), false);
 });
 
 test("operator accounts can use the board but cannot add vehicles or manage locations", async () => {

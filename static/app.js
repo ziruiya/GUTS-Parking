@@ -11,6 +11,8 @@
   const locationError = document.querySelector("#location-error");
   const franchiseDialog = document.querySelector("#franchise-dialog");
   const franchiseError = document.querySelector("#franchise-error");
+  const employeeDialog = document.querySelector("#employee-dialog");
+  const employeeError = document.querySelector("#employee-error");
   const statusDialog = document.querySelector("#status-dialog");
   const statusError = document.querySelector("#status-error");
   const assessmentManagerDialog = document.querySelector("#assessment-manager-dialog");
@@ -1366,6 +1368,7 @@
     const palette = document.querySelector("#damage-type-palette");
     const markList = document.querySelector("#inspection-mark-list");
     const hint = document.querySelector("#inspection-hint");
+    document.querySelector("#manage-damage-types-button").hidden = !canManage;
     palette.replaceChildren();
     markList.replaceChildren();
     window.__rentalcarInspectionState = { marks: inspectionMarks, damageTypes, selectedTypeId: selectedDamageTypeId };
@@ -1799,6 +1802,134 @@
     franchiseDialog.showModal();
   }
 
+  function showEmployeeCredential(employee, password) {
+    const output = document.querySelector("#employee-credential");
+    output.replaceChildren();
+    const message = document.createElement("p");
+    message.textContent = `「${employee.username}」の初期パスワードです。安全な方法で本人に渡してください。この画面を閉じると再表示できません。`;
+    const credential = document.createElement("code");
+    credential.textContent = password;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "quiet-button";
+    copy.textContent = "パスワードをコピー";
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(password);
+        copy.textContent = "コピーしました";
+      } catch (error) {
+        employeeError.textContent = `コピーできませんでした。表示中のパスワードを手動でコピーしてください。${error.message ? ` (${error.message})` : ""}`;
+      }
+    });
+    output.append(message, credential, copy);
+    output.hidden = false;
+    output.scrollIntoView({ block: "nearest" });
+  }
+
+  async function loadEmployees() {
+    const { employees } = await api("/api/employees");
+    const list = document.querySelector("#employee-list");
+    list.replaceChildren();
+    if (!employees.length) {
+      const empty = document.createElement("p");
+      empty.className = "status-empty";
+      empty.textContent = "従業員アカウントはまだありません。";
+      list.append(empty);
+      return;
+    }
+    for (const employee of employees) {
+      const row = document.createElement("div");
+      row.className = "employee-row";
+      const details = document.createElement("div");
+      const username = document.createElement("strong");
+      username.textContent = employee.username;
+      const created = document.createElement("span");
+      created.textContent = `作成日: ${employee.created_at}`;
+      details.append(username, created);
+      const actions = document.createElement("div");
+      actions.className = "employee-row-actions";
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "quiet-button";
+      reset.textContent = "パスワード再発行";
+      reset.addEventListener("click", async () => {
+        employeeError.textContent = "";
+        if (!window.confirm(`${employee.username} のパスワードを再発行しますか？現在のログイン中セッションは終了します。`)) return;
+        reset.disabled = true;
+        try {
+          const result = await api(`/api/employees/${employee.id}/password`, { method: "PATCH", body: "{}" });
+          showEmployeeCredential(result.employee, result.password);
+        } catch (error) {
+          employeeError.textContent = error.message;
+        } finally {
+          reset.disabled = false;
+        }
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger-button";
+      remove.textContent = "削除";
+      remove.addEventListener("click", async () => {
+        employeeError.textContent = "";
+        if (!window.confirm(`${employee.username} のアカウントを削除しますか？この操作は元に戻せません。`)) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/employees/${employee.id}`, { method: "DELETE" });
+          document.querySelector("#employee-credential").hidden = true;
+          await loadEmployees();
+        } catch (error) {
+          employeeError.textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      actions.append(reset, remove);
+      row.append(details, actions);
+      list.append(row);
+    }
+  }
+
+  function openEmployeeManager() {
+    if (!canManage) return;
+    employeeError.textContent = "";
+    document.querySelector("#employee-credential").hidden = true;
+    document.querySelector("#add-employee-form").reset();
+    employeeDialog.showModal();
+    loadEmployees().catch((error) => { employeeError.textContent = error.message; });
+  }
+
+  async function downloadMariaDbExport() {
+    if (!canManage) return;
+    const button = document.querySelector("#export-vehicles-button");
+    const error = document.querySelector("#admin-error");
+    error.textContent = "";
+    button.disabled = true;
+    button.querySelector("b").textContent = "エクスポートを準備中…";
+    try {
+      const response = await fetch("/api/export/mariadb");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 401) showLogin();
+        throw new Error(body.detail || `エクスポートに失敗しました (HTTP ${response.status})`);
+      }
+      const blob = await response.blob();
+      const filename = response.headers.get("content-disposition")
+        ?.match(/filename="([^"]+)"/)?.[1] || "guts-parking-mariadb-export.json";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (failure) {
+      error.textContent = failure.message;
+    } finally {
+      button.disabled = false;
+      button.querySelector("b").textContent = "車両データをエクスポート";
+    }
+  }
+
   function renderClassManager() {
     const list = document.querySelector("#class-manager-list");
     list.replaceChildren();
@@ -1968,6 +2099,7 @@
   }
 
   function openClassManager() {
+    if (!canManage) return;
     classError.textContent = "";
     renderClassManager();
     classDialog.showModal();
@@ -1982,6 +2114,7 @@
     document.querySelector("#manage-classes-button").hidden = !canManage;
     document.querySelector("#manage-options-button").hidden = !canManage;
     document.querySelector("#manage-vehicle-statuses-button").hidden = !canManage;
+    document.querySelector("#manage-damage-types-button").hidden = !canManage;
     document.querySelector("#delete-vehicle").hidden = !vehicle || !canManage;
     const defaultLot = lots[0];
     document.querySelector(".default-location-note").textContent =
@@ -2021,10 +2154,12 @@
     socket.addEventListener("message", () => loadBoard().catch(showError));
     socket.addEventListener("close", (event) => {
       setConnection(false);
-      if (event.code === 4003 || event.code === 4004) {
+      if ([4003, 4004, 4005, 4006].includes(event.code)) {
         loginError.textContent = event.code === 4003
           ? "この加盟店アカウントは一時停止中です。総本店へお問い合わせください。"
-          : "この加盟店アカウントは削除されました。総本店へお問い合わせください。";
+          : event.code === 4004
+          ? "この加盟店アカウントは削除されました。総本店へお問い合わせください。"
+          : "アカウントの認証情報が変更されました。新しい情報で再ログインしてください。";
         showLogin();
         return;
       }
@@ -2071,11 +2206,10 @@
   document.querySelector("#add-vehicle-button").addEventListener("click", () => openVehicle());
   document.querySelector("#manage-locations-button").addEventListener("click", openLocationManager);
   document.querySelector("#admin-panel-button").addEventListener("click", () =>
-    document.querySelector("#admin-dialog").showModal());
+    canManage && document.querySelector("#admin-dialog").showModal());
   document.querySelector("#close-admin-dialog").addEventListener("click", () =>
     document.querySelector("#admin-dialog").close());
   document.querySelector("#manage-logistics-button").addEventListener("click", openLogisticsManager);
-  document.querySelector("#manage-classes-button").addEventListener("click", openClassManager);
   document.querySelector("#close-class-dialog").addEventListener("click", () => classDialog.close());
   document.querySelector("#close-logistics-dialog").addEventListener("click", () => logisticsDialog.close());
   logisticsDialog.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => {
@@ -2118,6 +2252,10 @@
     saveDistances("/api/lot-distances", [...document.querySelectorAll("#lot-distance-table input")],
       (input, minutes) => ({ from_lot_id: Number(input.dataset.fromLotId), to_lot_id: Number(input.dataset.toLotId), minutes })));
   document.querySelector("#manage-franchises-button").addEventListener("click", openFranchiseManager);
+  document.querySelector("#manage-employees-button").addEventListener("click", openEmployeeManager);
+  document.querySelector("#export-vehicles-button").addEventListener("click", downloadMariaDbExport);
+  document.querySelector("#close-employee-dialog").addEventListener("click", () => employeeDialog.close());
+  document.querySelector("#manage-classes-button").addEventListener("click", openClassManager);
   document.querySelector("#manage-vehicle-statuses-button").addEventListener("click", openStatusManager);
   document.querySelector("#manage-options-button").addEventListener("click", () => {
     document.querySelector("#option-error").textContent = "";
@@ -2125,12 +2263,34 @@
     document.querySelector("#option-dialog").showModal();
   });
   document.querySelector("#manage-assessment-button").addEventListener("click", openAssessmentManager);
+  document.querySelector("#manage-damage-types-button").addEventListener("click", openAssessmentManager);
   document.querySelector("#close-location-dialog").addEventListener("click", () => locationDialog.close());
   document.querySelector("#close-franchise-dialog").addEventListener("click", () => franchiseDialog.close());
   document.querySelector("#close-status-dialog").addEventListener("click", () => statusDialog.close());
   document.querySelector("#close-option-dialog").addEventListener("click", () =>
     document.querySelector("#option-dialog").close());
   document.querySelector("#close-assessment-manager").addEventListener("click", () => assessmentManagerDialog.close());
+  document.querySelector("#add-employee-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    employeeError.textContent = "";
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const result = await api("/api/employees", {
+        method: "POST",
+        body: JSON.stringify({ username: form.elements.username.value }),
+      });
+      form.reset();
+      showEmployeeCredential(result.employee, result.password);
+      await loadEmployees();
+    } catch (error) {
+      employeeError.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
   document.querySelector("#add-status-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     statusError.textContent = "";

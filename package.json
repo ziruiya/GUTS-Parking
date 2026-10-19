@@ -1,6 +1,6 @@
 {
   "name": "guts",
-  "version": "1.9.1",
+  "version": "2.0.1",
   "private": true,
   "description": "A realtime rental vehicle parking board",
   "main": "app/server.js",
@@ -11,6 +11,7 @@
   "scripts": {
     "start": "node app/server.js",
     "test": "node --test tests/test_app.js",
+    "backup-db": "node app/backup-db.js",
     "create-admin": "node app/create-admin.js",
     "create-operator": "node app/create-operator.js"
   },

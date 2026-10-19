@@ -1,4 +1,5 @@
 const http = require("node:http");
+const { randomBytes } = require("node:crypto");
 const path = require("node:path");
 require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 const express = require("express");
@@ -130,6 +131,7 @@ class RealtimeBoard {
 
     this.webSocketServer.handleUpgrade(request, socket, head, (websocket) => {
       websocket.tenantId = user.tenant_id;
+      websocket.username = username;
       this.clients.add(websocket);
       websocket.on("close", () => this.clients.delete(websocket));
       websocket.on("error", (error) => {
@@ -154,6 +156,12 @@ class RealtimeBoard {
   closeTenant(tenantId, code = 4003, reason = "Store access suspended") {
     for (const websocket of this.clients) {
       if (websocket.tenantId === tenantId) websocket.close(code, reason);
+    }
+  }
+
+  closeUser(username, code, reason) {
+    for (const websocket of this.clients) {
+      if (websocket.username === username) websocket.close(code, reason);
     }
   }
 }
@@ -500,6 +508,13 @@ function createApplication(options = {}) {
     next();
   }
 
+  function removeUserSessions(username) {
+    const remove = db.prepare("DELETE FROM sessions WHERE sid = ?");
+    for (const row of db.prepare("SELECT sid, sess FROM sessions").all()) {
+      if (JSON.parse(row.sess).username === username) remove.run(row.sid);
+    }
+  }
+
   function requireAdmin(request, response, next) {
     if (request.user.role !== "admin") {
       return response.status(403).json({ detail: "Administrator permission is required." });
@@ -636,6 +651,170 @@ function createApplication(options = {}) {
       });
       response.json({ ok: true });
     });
+  });
+
+  app.get("/api/employees", requireUser, requireAdmin, (request, response) => {
+    const employees = db.prepare(`
+      SELECT id, username, created_at
+      FROM users
+      WHERE tenant_id = ? AND role = 'operator'
+      ORDER BY username COLLATE NOCASE, id
+    `).all(request.tenantId);
+    response.json({ employees });
+  });
+
+  app.post("/api/employees", requireUser, requireAdmin, requireSameOrigin, async (request, response, next) => {
+    const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
+    if (!username || username.length > 80) {
+      return response.status(422).json({ detail: "ユーザー名は1〜80文字で入力してください。" });
+    }
+    const password = randomBytes(18).toString("base64url");
+    try {
+      const passwordHash = await hashPassword(password);
+      const result = db.prepare(`
+        INSERT INTO users (username, password_hash, role, tenant_id)
+        VALUES (?, ?, 'operator', ?)
+      `).run(username, passwordHash, request.tenantId);
+      response.set("Cache-Control", "no-store");
+      response.status(201).json({
+        employee: db.prepare("SELECT id, username, created_at FROM users WHERE id = ?")
+          .get(result.lastInsertRowid),
+        password,
+      });
+    } catch (error) {
+      if (isUniqueConstraint(error)) {
+        return response.status(409).json({ detail: "同じユーザー名のアカウントが既にあります。" });
+      }
+      next(error);
+    }
+  });
+
+  app.patch(
+    "/api/employees/:id/password",
+    requireUser,
+    requireAdmin,
+    requireSameOrigin,
+    async (request, response, next) => {
+      const employeeId = parseVehicleId(request.params.id);
+      const employee = employeeId === null ? null : db.prepare(`
+        SELECT id, username FROM users
+        WHERE id = ? AND tenant_id = ? AND role = 'operator'
+      `).get(employeeId, request.tenantId);
+      if (!employee) return response.status(404).json({ detail: "従業員アカウントが見つかりません。" });
+      const password = randomBytes(18).toString("base64url");
+      try {
+        const passwordHash = await hashPassword(password);
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          const updated = db.prepare(`
+            UPDATE users SET password_hash = ?
+            WHERE id = ? AND tenant_id = ? AND role = 'operator'
+          `).run(passwordHash, employee.id, request.tenantId);
+          if (!updated.changes) {
+            db.exec("ROLLBACK");
+            return response.status(404).json({ detail: "従業員アカウントが見つかりません。" });
+          }
+          removeUserSessions(employee.username);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+        realtime.closeUser(employee.username, 4005, "Password reset");
+        response.set("Cache-Control", "no-store");
+        response.json({ employee: { id: employee.id, username: employee.username }, password });
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.delete(
+    "/api/employees/:id",
+    requireUser,
+    requireAdmin,
+    requireSameOrigin,
+    (request, response, next) => {
+      const employeeId = parseVehicleId(request.params.id);
+      const employee = employeeId === null ? null : db.prepare(`
+        SELECT id, username FROM users
+        WHERE id = ? AND tenant_id = ? AND role = 'operator'
+      `).get(employeeId, request.tenantId);
+      if (!employee) return response.status(404).json({ detail: "従業員アカウントが見つかりません。" });
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          removeUserSessions(employee.username);
+          db.prepare("DELETE FROM users WHERE id = ?").run(employee.id);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
+        realtime.closeUser(employee.username, 4006, "Account deleted");
+        response.status(204).end();
+      } catch (error) {
+        next(error);
+      }
+    },
+  );
+
+  app.get("/api/export/mariadb", requireUser, requireAdmin, (request, response) => {
+    const tenantId = request.tenantId;
+    const vehicles = db.prepare("SELECT * FROM vehicles WHERE tenant_id = ? ORDER BY id").all(tenantId);
+    const exportData = {
+      format: "guts-parking-mariadb-export",
+      format_version: 1,
+      target_database: "MariaDB 10.11.10",
+      exported_at: new Date().toISOString(),
+      tenant: db.prepare(`
+        SELECT id, name, is_headquarters FROM tenants WHERE id = ?
+      `).get(tenantId),
+      tables: {
+        parking_lots: db.prepare("SELECT * FROM parking_lots WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        vehicles,
+        vehicle_statuses: db.prepare("SELECT * FROM vehicle_statuses WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        vehicle_status_assignments: db.prepare(`
+          SELECT a.vehicle_id, a.status_id FROM vehicle_status_assignments a
+          JOIN vehicles v ON v.id = a.vehicle_id
+          WHERE v.tenant_id = ? ORDER BY a.vehicle_id, a.status_id
+        `).all(tenantId),
+        vehicle_assessment_fields: db.prepare(
+          "SELECT * FROM vehicle_assessment_fields WHERE tenant_id = ? ORDER BY id",
+        ).all(tenantId),
+        vehicle_assessment_values: db.prepare(`
+          SELECT a.vehicle_id, a.field_id, a.value FROM vehicle_assessment_values a
+          JOIN vehicles v ON v.id = a.vehicle_id
+          WHERE v.tenant_id = ? ORDER BY a.vehicle_id, a.field_id
+        `).all(tenantId),
+        vehicle_damage_types: db.prepare(
+          "SELECT * FROM vehicle_damage_types WHERE tenant_id = ? ORDER BY id",
+        ).all(tenantId),
+        vehicle_damage_marks: db.prepare(`
+          SELECT m.* FROM vehicle_damage_marks m
+          JOIN vehicles v ON v.id = m.vehicle_id
+          WHERE v.tenant_id = ? ORDER BY m.vehicle_id, m.id
+        `).all(tenantId),
+        vehicle_option_types: db.prepare(
+          "SELECT * FROM vehicle_option_types WHERE tenant_id = ? ORDER BY id",
+        ).all(tenantId),
+        vehicle_option_suppressions: db.prepare(
+          "SELECT * FROM vehicle_option_suppressions WHERE tenant_id = ? ORDER BY built_in_key",
+        ).all(tenantId),
+        jobs: db.prepare("SELECT * FROM jobs WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        vehicle_classes: db.prepare("SELECT * FROM vehicle_classes WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        stores: db.prepare("SELECT * FROM stores WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        lot_distances: db.prepare("SELECT * FROM lot_distances WHERE tenant_id = ? ORDER BY from_lot_id, to_lot_id")
+          .all(tenantId),
+        store_lot_distances: db.prepare(
+          "SELECT * FROM store_lot_distances WHERE tenant_id = ? ORDER BY store_id, lot_id",
+        ).all(tenantId),
+      },
+    };
+    const date = exportData.exported_at.slice(0, 10);
+    response.set("Cache-Control", "no-store");
+    response.attachment(`guts-parking-mariadb-${tenantId}-${date}.json`);
+    response.type("application/json; charset=utf-8").send(JSON.stringify(exportData, null, 2));
   });
 
   app.get("/api/bootstrap", requireUser, (request, response) => {
