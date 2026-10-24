@@ -53,7 +53,7 @@
         <div class="summary-card"><span>要対応</span><b id="attention-count">0</b></div>
       </section>
       <section class="status-section">
-        <details id="status-panel" open>
+        <details id="status-panel">
           <summary class="status-summary">
             <span><strong>ステータス別の車両</strong></span>
             <span class="status-summary-actions"><span id="status-total" class="muted"></span><span class="status-toggle-icon" aria-hidden="true">⌄</span></span>
@@ -69,7 +69,7 @@
         </details>
       </section>
       <section class="status-section job-section">
-        <details id="job-panel" open>
+        <details id="job-panel">
           <summary class="status-summary">
             <span><strong>ジョブ</strong></span>
             <span class="status-summary-actions"><span id="job-total" class="muted"></span><span class="status-toggle-icon" aria-hidden="true">⌄</span></span>
@@ -77,6 +77,31 @@
           <div class="status-panel-content">
             <div class="status-toolbar"><button type="button" id="manage-jobs-button" class="primary-button">＋ ジョブ管理</button></div>
             <div id="job-list" class="job-list"></div>
+          </div>
+        </details>
+      </section>
+      <section class="status-section">
+        <details id="inspection-panel">
+          <summary class="status-summary">
+            <span><strong>点検</strong></span>
+            <span class="status-summary-actions"><span id="inspection-total" class="muted"></span><span class="status-toggle-icon" aria-hidden="true">⌄</span></span>
+          </summary>
+          <div class="status-panel-content">
+            <div id="inspection-list" class="inspection-list"></div>
+            <p id="inspection-error" class="error-message" role="alert"></p>
+          </div>
+        </details>
+      </section>
+      <section class="status-section task-section">
+        <details id="task-panel">
+          <summary class="status-summary">
+            <span><strong>タスク</strong></span>
+            <span class="status-summary-actions"><span id="task-total" class="muted"></span><span class="status-toggle-icon" aria-hidden="true">⌄</span></span>
+          </summary>
+          <div class="status-panel-content">
+            <div class="status-toolbar"><button type="button" id="manage-tasks-button" class="primary-button">＋ タスク管理</button></div>
+            <div id="task-list" class="task-list"></div>
+            <p id="task-board-error" class="error-message" role="alert"></p>
           </div>
         </details>
       </section>
@@ -155,6 +180,13 @@
           <button type="button" id="manage-assessment-button" class="quiet-button inline-manage-button">評価項目を管理</button>
         </div>
         <div id="assessment-fields"></div>
+        <section class="vehicle-inspection-dates">
+          <h3>車検</h3>
+          <div class="inspection-date-grid">
+            <label>車検満了日<input type="date" name="inspection_expiry_date"></label>
+            <label>法定点検日<input type="date" name="statutory_inspection_date"></label>
+          </div>
+        </section>
         <label class="assessment-notes-field">備考欄<textarea name="notes" rows="4" maxlength="5000" placeholder="車両について共有したいことを記録できます。"></textarea></label>
       </section>
       <section class="inspection-section">
@@ -181,6 +213,12 @@
       </div>
       <h3>評価項目</h3>
       <div id="assessment-field-manager-list" class="assessment-manager-list"></div>
+      <h3>車検</h3>
+      <div class="assessment-manager-list">
+        <div class="assessment-manager-row"><span>車検満了日 · 日付</span></div>
+        <div class="assessment-manager-row"><span>法定点検日 · 日付</span></div>
+      </div>
+      <p class="muted">日付は各車両の追加・編集画面にある「車検」欄から入力します。</p>
       <form id="add-assessment-field-form" class="add-assessment-field-form">
         <label>項目名<input name="name" required maxlength="60" placeholder="例：ガラスの状態"></label>
         <label>入力形式<select name="field_type" required>
@@ -246,6 +284,21 @@
       </form>
       <div id="job-manager-list" class="status-manager-list"></div>
       <p id="job-error" class="error-message" role="alert"></p>
+    </div>
+  </dialog>
+  <dialog id="task-dialog">
+    <div class="status-form">
+      <div class="dialog-heading">
+        <div><h2>タスク管理</h2></div>
+        <button type="button" id="close-task-dialog" class="close-button" aria-label="閉じる">×</button>
+      </div>
+      <form id="add-task-form" class="add-task-form">
+        <label>日付<input type="date" name="scheduled_date" required></label>
+        <label>作業内容<textarea name="content" rows="3" maxlength="1000" required placeholder="例：第4駐車場の車両をすべて移動する"></textarea></label>
+        <button type="submit" class="primary-button">タスクを追加</button>
+      </form>
+      <div id="task-manager-list" class="task-list"></div>
+      <p id="task-error" class="error-message" role="alert"></p>
     </div>
   </dialog>
   <dialog id="option-dialog">

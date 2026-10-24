@@ -27,6 +27,10 @@ const { ErrorLogger } = require("./error-logger");
 const STATIC_DIR = path.resolve(__dirname, "..", "static");
 const THREE_BUILD_DIR = path.resolve(__dirname, "..", "node_modules", "three", "build");
 const STATUSES = DEFAULT_STATUSES.map((status) => status.key);
+const INSPECTION_DATE_FIELDS = {
+  vehicle_inspection: "inspection_expiry_date",
+  statutory_inspection: "statutory_inspection_date",
+};
 const POSITION_GRID = Array.from({ length: 32 }, (_, index) => [
   [0.125, 0.375, 0.625, 0.875][index % 4],
   [0.0625, 0.1875, 0.3125, 0.4375, 0.5625, 0.6875, 0.8125, 0.9375][Math.floor(index / 4)],
@@ -363,10 +367,61 @@ function normalizeJobTime(value) {
   return `${pad(year, 4)}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}`;
 }
 
+function isValidDateOnly(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+}
+
+function addDaysToDateOnly(value, days) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 function localDay(date, timeZone) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone, year: "numeric", month: "2-digit", day: "2-digit",
   }).format(date);
+}
+
+function buildInspectionReminders(db, tenantId, vehicles, now = new Date(),
+  timeZone = process.env.JOBS_TIMEZONE || "Asia/Tokyo") {
+  const today = localDay(now, timeZone);
+  const lastReminderDay = addDaysToDateOnly(today, 30);
+  const completions = new Map(db.prepare(`
+    SELECT c.vehicle_id, c.inspection_type, c.due_date, c.completed_at
+    FROM vehicle_inspection_completions c
+    JOIN vehicles v ON v.id = c.vehicle_id
+    WHERE v.tenant_id = ?
+  `).all(tenantId).map((entry) => [
+    `${entry.vehicle_id}:${entry.inspection_type}:${entry.due_date}`,
+    entry,
+  ]));
+  const fields = [
+    ["vehicle_inspection", "inspection_expiry_date", "車検満了日"],
+    ["statutory_inspection", "statutory_inspection_date", "法定点検日"],
+  ];
+  const reminders = [];
+  for (const vehicle of vehicles) {
+    for (const [type, field, label] of fields) {
+      const dueDate = vehicle[field];
+      if (!dueDate || dueDate > lastReminderDay) continue;
+      const completion = completions.get(`${vehicle.id}:${type}:${dueDate}`);
+      if (completion && localDay(new Date(completion.completed_at), timeZone) < today) continue;
+      reminders.push({
+        vehicle_id: vehicle.id,
+        plate: vehicle.plate,
+        inspection_type: type,
+        label,
+        due_date: dueDate,
+        completed: Boolean(completion),
+      });
+    }
+  }
+  return reminders.sort((left, right) =>
+    left.due_date.localeCompare(right.due_date) || left.plate.localeCompare(right.plate));
 }
 
 // Removes completed jobs finished before the current local day (i.e. cleared at midnight).
@@ -376,6 +431,16 @@ function purgeCompletedJobs(db, now = new Date(), timeZone = process.env.JOBS_TI
     .filter((job) => !job.completed_at || localDay(new Date(job.completed_at), timeZone) < today)
     .map((job) => job.id);
   const remove = db.prepare("DELETE FROM jobs WHERE id = ?");
+  for (const id of stale) remove.run(id);
+  return stale.length;
+}
+
+function purgeCompletedTasks(db, now = new Date(), timeZone = process.env.JOBS_TIMEZONE || "Asia/Tokyo") {
+  const today = localDay(now, timeZone);
+  const stale = db.prepare("SELECT id, completed_at FROM scheduled_tasks WHERE completed = 1").all()
+    .filter((task) => !task.completed_at || localDay(new Date(task.completed_at), timeZone) < today)
+    .map((task) => task.id);
+  const remove = db.prepare("DELETE FROM scheduled_tasks WHERE id = ?");
   for (const id of stale) remove.run(id);
   return stale.length;
 }
@@ -802,6 +867,14 @@ function createApplication(options = {}) {
           "SELECT * FROM vehicle_option_suppressions WHERE tenant_id = ? ORDER BY built_in_key",
         ).all(tenantId),
         jobs: db.prepare("SELECT * FROM jobs WHERE tenant_id = ? ORDER BY id").all(tenantId),
+        scheduled_tasks: db.prepare(
+          "SELECT * FROM scheduled_tasks WHERE tenant_id = ? ORDER BY id",
+        ).all(tenantId),
+        vehicle_inspection_completions: db.prepare(`
+          SELECT c.* FROM vehicle_inspection_completions c
+          JOIN vehicles v ON v.id = c.vehicle_id
+          WHERE v.tenant_id = ? ORDER BY c.vehicle_id, c.inspection_type, c.due_date
+        `).all(tenantId),
         vehicle_classes: db.prepare("SELECT * FROM vehicle_classes WHERE tenant_id = ? ORDER BY id").all(tenantId),
         stores: db.prepare("SELECT * FROM stores WHERE tenant_id = ? ORDER BY id").all(tenantId),
         lot_distances: db.prepare("SELECT * FROM lot_distances WHERE tenant_id = ? ORDER BY from_lot_id, to_lot_id")
@@ -818,12 +891,14 @@ function createApplication(options = {}) {
   });
 
   app.get("/api/bootstrap", requireUser, (request, response) => {
+    purgeTasks();
     const parkingLots = db.prepare(
       `SELECT ${LOT_COLUMNS} FROM parking_lots WHERE tenant_id = ? ORDER BY display_order, id`,
     ).all(request.tenantId).map(parkingLotFromRow);
     const vehicleRows = db.prepare(`
       SELECT id, external_id, plate, vehicle_type, parking_lot_id,
-             position_x, position_y, unwashed, no_fuel, needs_repair, options, notes
+             position_x, position_y, unwashed, no_fuel, needs_repair, options, notes,
+             inspection_expiry_date, statutory_inspection_date
       FROM vehicles WHERE tenant_id = ? ORDER BY plate, id
     `).all(request.tenantId);
     const statusAssignments = new Map();
@@ -890,6 +965,11 @@ function createApplication(options = {}) {
       FROM jobs WHERE tenant_id = ?
       ORDER BY completed, scheduled_at, id
     `).all(request.tenantId);
+    const tasks = db.prepare(`
+      SELECT id, scheduled_date, content, completed, completed_at
+      FROM scheduled_tasks WHERE tenant_id = ?
+      ORDER BY scheduled_date, id
+    `).all(request.tenantId);
     const vehicleClasses = db.prepare(
       "SELECT id, name, color, display_order FROM vehicle_classes WHERE tenant_id = ? ORDER BY display_order, id",
     ).all(request.tenantId);
@@ -904,6 +984,8 @@ function createApplication(options = {}) {
       parking_lots: parkingLots,
       vehicles,
       jobs,
+      tasks,
+      inspection_reminders: buildInspectionReminders(db, request.tenantId, vehicles),
       statuses,
       assessment_fields: assessmentFields,
       damage_types: damageTypes,
@@ -1273,7 +1355,7 @@ function createApplication(options = {}) {
     }
   });
 
-  app.post("/api/parking-lots", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
+  app.post("/api/parking-lots", requireUser, requireSameOrigin, (request, response, next) => {
     const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
     const rawNavigationUrl = request.body?.navigation_url ?? "";
     const navigationUrl = typeof rawNavigationUrl === "string" ? rawNavigationUrl.trim() : rawNavigationUrl;
@@ -1304,7 +1386,7 @@ function createApplication(options = {}) {
     }
   });
 
-  app.patch("/api/parking-lots/:id", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
+  app.patch("/api/parking-lots/:id", requireUser, requireSameOrigin, (request, response, next) => {
     try {
       const lotId = parseVehicleId(request.params.id);
       const lot = lotId === null ? null : db.prepare(
@@ -1387,12 +1469,11 @@ function createApplication(options = {}) {
   app.post(
     "/api/parking-lots/:id/markings",
     requireUser,
-    requireAdmin,
     requireSameOrigin,
     saveParkingLotMarkings,
   );
 
-  app.delete("/api/parking-lots/:id", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
+  app.delete("/api/parking-lots/:id", requireUser, requireSameOrigin, (request, response, next) => {
     const lotId = parseVehicleId(request.params.id);
     if (lotId === null) return response.status(404).json({ detail: "Parking location not found." });
     try {
@@ -1427,7 +1508,7 @@ function createApplication(options = {}) {
     }
   });
 
-  app.put("/api/parking-lots/order", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
+  app.put("/api/parking-lots/order", requireUser, requireSameOrigin, (request, response, next) => {
     const { ids } = request.body || {};
     const actualIds = db.prepare("SELECT id FROM parking_lots WHERE tenant_id = ?")
       .all(request.tenantId).map((lot) => lot.id).sort((a, b) => a - b);
@@ -1657,6 +1738,100 @@ function createApplication(options = {}) {
     }
   });
 
+  app.post("/api/tasks", requireUser, requireSameOrigin, (request, response, next) => {
+    const body = request.body || {};
+    const scheduledDate = body.scheduled_date;
+    const content = typeof body.content === "string" ? body.content.trim() : "";
+    if (!isValidDateOnly(scheduledDate) || !content || content.length > 1000) {
+      return response.status(422).json({ detail: "タスクの日付と内容（1〜1000文字）を入力してください。" });
+    }
+    try {
+      const result = db.prepare(`
+        INSERT INTO scheduled_tasks (tenant_id, scheduled_date, content)
+        VALUES (?, ?, ?)
+      `).run(request.tenantId, scheduledDate, content);
+      realtime.notify(request.tenantId);
+      response.status(201).json({
+        id: Number(result.lastInsertRowid),
+        scheduled_date: scheduledDate,
+        content,
+        completed: 0,
+        completed_at: null,
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/tasks/:id", requireUser, requireSameOrigin, (request, response, next) => {
+    const taskId = parseVehicleId(request.params.id);
+    if (taskId === null || typeof request.body?.completed !== "boolean") {
+      return response.status(422).json({ detail: "タスクの状態が正しくありません。" });
+    }
+    try {
+      const completed = request.body.completed;
+      const result = db.prepare(`
+        UPDATE scheduled_tasks SET completed = ?, completed_at = ?
+        WHERE id = ? AND tenant_id = ?
+      `).run(completed ? 1 : 0, completed ? new Date().toISOString() : null, taskId, request.tenantId);
+      if (!result.changes) return response.status(404).json({ detail: "タスクが見つかりません。" });
+      realtime.notify(request.tenantId);
+      response.json({ id: taskId, completed });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/tasks/:id", requireUser, requireSameOrigin, (request, response, next) => {
+    const taskId = parseVehicleId(request.params.id);
+    if (taskId === null) return response.status(404).json({ detail: "タスクが見つかりません。" });
+    try {
+      const result = db.prepare("DELETE FROM scheduled_tasks WHERE id = ? AND tenant_id = ?")
+        .run(taskId, request.tenantId);
+      if (!result.changes) return response.status(404).json({ detail: "タスクが見つかりません。" });
+      realtime.notify(request.tenantId);
+      response.status(204).end();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/vehicle-inspections/:vehicleId", requireUser, requireSameOrigin, (request, response, next) => {
+    const vehicleId = parseVehicleId(request.params.vehicleId);
+    const { inspection_type: inspectionType, due_date: dueDate, completed } = request.body || {};
+    const field = INSPECTION_DATE_FIELDS[inspectionType];
+    if (vehicleId === null || !field || !isValidDateOnly(dueDate) || typeof completed !== "boolean") {
+      return response.status(422).json({ detail: "車検・点検の状態が正しくありません。" });
+    }
+    try {
+      const vehicle = db.prepare(
+        `SELECT ${field} AS due_date FROM vehicles WHERE id = ? AND tenant_id = ?`,
+      ).get(vehicleId, request.tenantId);
+      if (!vehicle) return response.status(404).json({ detail: "車両が見つかりません。" });
+      if (vehicle.due_date !== dueDate) {
+        return response.status(409).json({ detail: "車検・点検日が変更されています。最新情報を再読み込みしてください。" });
+      }
+      if (completed) {
+        db.prepare(`
+          INSERT INTO vehicle_inspection_completions
+            (vehicle_id, inspection_type, due_date, completed_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(vehicle_id, inspection_type, due_date)
+          DO UPDATE SET completed_at = excluded.completed_at
+        `).run(vehicleId, inspectionType, dueDate, new Date().toISOString());
+      } else {
+        db.prepare(`
+          DELETE FROM vehicle_inspection_completions
+          WHERE vehicle_id = ? AND inspection_type = ? AND due_date = ?
+        `).run(vehicleId, inspectionType, dueDate);
+      }
+      realtime.notify(request.tenantId);
+      response.json({ vehicle_id: vehicleId, inspection_type: inspectionType, due_date: dueDate, completed });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/statuses", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
     const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
     const rawIcon = request.body?.icon;
@@ -1709,7 +1884,7 @@ function createApplication(options = {}) {
     }
   });
 
-  app.post("/api/vehicles", requireUser, requireAdmin, requireSameOrigin, (request, response, next) => {
+  app.post("/api/vehicles", requireUser, requireSameOrigin, (request, response, next) => {
     try {
       const body = request.body || {};
       const { plate, vehicle_type: vehicleType } = body;
@@ -1722,6 +1897,17 @@ function createApplication(options = {}) {
       if (body.notes !== undefined &&
           (typeof body.notes !== "string" || body.notes.length > 5000)) {
         return response.status(422).json({ detail: "Vehicle notes must be 5000 characters or fewer." });
+      }
+      const inspectionDates = {};
+      for (const field of Object.values(INSPECTION_DATE_FIELDS)) {
+        const value = body[field];
+        if (value === undefined || value === null || value === "") {
+          inspectionDates[field] = null;
+        } else if (isValidDateOnly(value)) {
+          inspectionDates[field] = value;
+        } else {
+          return response.status(422).json({ detail: "車検・点検日は有効な日付を指定してください。" });
+        }
       }
       const lotId = body.parking_lot_id ?? getDefaultParkingLotId(db, request.tenantId);
       if (!Number.isInteger(lotId) || !validateLot(lotId, request.tenantId)) {
@@ -1776,12 +1962,15 @@ function createApplication(options = {}) {
         result = db.prepare(`
           INSERT INTO vehicles
             (plate, vehicle_type, parking_lot_id, position_x, position_y,
-             unwashed, no_fuel, needs_repair, options, notes, tenant_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             unwashed, no_fuel, needs_repair, options, notes,
+             inspection_expiry_date, statutory_inspection_date, tenant_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           plate.trim(), vehicleType.trim(), lotId ?? null, position.positionX, position.positionY,
           ...STATUSES.map((status) => Number(assignedStatusIds.has(legacyStatusIds.get(status)))),
-          JSON.stringify(options), (body.notes || "").trim(), request.tenantId,
+          JSON.stringify(options), (body.notes || "").trim(),
+          inspectionDates.inspection_expiry_date, inspectionDates.statutory_inspection_date,
+          request.tenantId,
         );
         const addAssignment = db.prepare(
           "INSERT INTO vehicle_status_assignments (vehicle_id, status_id) VALUES (?, ?)",
@@ -1815,6 +2004,7 @@ function createApplication(options = {}) {
       const allowed = new Set([
         "plate", "vehicle_type", "parking_lot_id", "position_x", "position_y",
         "options", "status_ids", "assessment_values", "inspection_marks", "notes", ...STATUSES,
+        ...Object.values(INSPECTION_DATE_FIELDS),
       ]);
       const entries = Object.entries(request.body || {});
       if (!entries.length) return response.status(422).json({ detail: "No vehicle fields supplied." });
@@ -1822,6 +2012,13 @@ function createApplication(options = {}) {
         return response.status(422).json({ detail: "Unknown vehicle field." });
       }
       const data = Object.fromEntries(entries);
+      for (const field of Object.values(INSPECTION_DATE_FIELDS)) {
+        if (!Object.hasOwn(data, field)) continue;
+        if (data[field] === "" || data[field] === null) data[field] = null;
+        else if (!isValidDateOnly(data[field])) {
+          return response.status(422).json({ detail: "車検・点検日は有効な日付を指定してください。" });
+        }
+      }
       const assessmentValues = Object.hasOwn(data, "assessment_values") ? data.assessment_values : undefined;
       const inspectionMarks = Object.hasOwn(data, "inspection_marks") ? data.inspection_marks : undefined;
       if (assessmentValues !== undefined &&
@@ -2063,13 +2260,26 @@ function createApplication(options = {}) {
     }
   }
 
+  function purgeTasks(now = new Date()) {
+    try {
+      const removed = purgeCompletedTasks(db, now);
+      if (removed) {
+        for (const tenant of db.prepare("SELECT id FROM tenants").all()) realtime.notify(tenant.id);
+      }
+      return removed;
+    } catch (error) {
+      errorLogger.capture("task-purge-error", error);
+      return 0;
+    }
+  }
+
   function createServer() {
     const server = http.createServer(app);
     realtime.attach(server);
     return server;
   }
 
-  return { app, db, sessionStore, errorLogger, createServer, purgeJobs };
+  return { app, db, sessionStore, errorLogger, createServer, purgeJobs, purgeTasks };
 }
 
 async function start() {
@@ -2084,7 +2294,11 @@ async function start() {
   });
   const server = application.createServer();
   application.purgeJobs();
-  setInterval(() => application.purgeJobs(), 60_000).unref();
+  application.purgeTasks();
+  setInterval(() => {
+    application.purgeJobs();
+    application.purgeTasks();
+  }, 60_000).unref();
   const port = Number(process.env.PORT || 8000);
   const host = process.env.HOST || "127.0.0.1";
   server.listen(port, host, () => console.log(`Guts board listening on http://${host}:${port}`));

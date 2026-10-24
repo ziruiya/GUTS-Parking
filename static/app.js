@@ -38,7 +38,10 @@
   let selectedDamageTypeId = null;
   let inspectionIssueDrag = null;
   let suppressDamageClick = false;
+  let inspectionReminders = [];
+  let tasks = [];
   let canManage = false;
+  let canManageLocations = false;
   let canManageFranchises = false;
   let activeVehicleType = "all";
   let activeStatus = "all";
@@ -126,11 +129,12 @@
     loginScreen.hidden = true;
     appScreen.hidden = false;
     canManage = userCanManage;
+    canManageLocations = true;
     canManageFranchises = userCanManageFranchises;
     document.querySelector("#current-user").textContent = `${tenantName} · ${username}`;
-    document.querySelector("#manage-locations-button").hidden = !canManage;
+    document.querySelector("#manage-locations-button").hidden = !canManageLocations;
     document.querySelector("#admin-panel-button").hidden = !canManage;
-    document.querySelector("#add-vehicle-button").hidden = !canManage;
+    document.querySelector("#add-vehicle-button").hidden = false;
     document.querySelector("#manage-franchises-button").hidden = !canManageFranchises;
     connectSocket();
     loadBoard().catch(showError);
@@ -165,6 +169,8 @@
     vehicleOptions = data.vehicle_options || [];
     statuses = data.statuses || [];
     jobs = data.jobs || [];
+    tasks = data.tasks || [];
+    inspectionReminders = data.inspection_reminders || [];
     assessmentFields = data.assessment_fields || [];
     damageTypes = data.damage_types || [];
     const availableDamageTypeIds = new Set(damageTypes.map((type) => type.id));
@@ -206,6 +212,8 @@
     renderStatusFilters();
     renderStatusList(vehicles);
     renderJobs();
+    renderInspectionReminders();
+    renderTasks();
     if (!dialog.open) renderInspectionDiagram();
   }
 
@@ -215,10 +223,10 @@
     card.dataset.lotId = lot.id;
     const heading = document.createElement("div");
     heading.className = "lot-heading";
-    heading.draggable = canManage;
-    heading.title = canManage ? "エリアカードをドラッグして並べ替え" : "";
+    heading.draggable = canManageLocations;
+    heading.title = canManageLocations ? "エリアカードをドラッグして並べ替え" : "";
     heading.addEventListener("dragstart", (event) => {
-      if (!canManage) {
+      if (!canManageLocations) {
         event.preventDefault();
         return;
       }
@@ -232,13 +240,13 @@
     });
     heading.addEventListener("dragend", () => card.classList.remove("reordering"));
     card.addEventListener("dragover", (event) => {
-      if (canManage && event.dataTransfer.types.includes("text/plain")) {
+      if (canManageLocations && event.dataTransfer.types.includes("text/plain")) {
         event.preventDefault();
         event.dataTransfer.dropEffect = "move";
       }
     });
     card.addEventListener("drop", (event) => {
-      if (!canManage) return;
+      if (!canManageLocations) return;
       event.preventDefault();
       const sourceId = Number(event.dataTransfer.getData("text/plain"));
       if (sourceId && sourceId !== lot.id) reorderLots(sourceId, lot.id).catch(showError);
@@ -271,7 +279,7 @@
       headingTitle.append(navigationIcon);
     }
     heading.append(headingTitle);
-    if (canManage) {
+    if (canManageLocations) {
       const controls = document.createElement("div");
       controls.className = "lot-controls";
       const resize = document.createElement("button");
@@ -292,7 +300,7 @@
       controls.append(resize, earlier, later);
       heading.append(controls);
     }
-    if (canManage && editingLotId === lot.id) card.classList.add("size-editing");
+    if (canManageLocations && editingLotId === lot.id) card.classList.add("size-editing");
     const area = document.createElement("div");
     area.className = "lot-area";
     area.dataset.lotId = lot.id;
@@ -348,7 +356,7 @@
     area.append(svg);
     for (const vehicle of inLot) area.append(makeToken(vehicle));
     let tools;
-    if (canManage && editingLotId === lot.id) {
+    if (canManageLocations && editingLotId === lot.id) {
       tools = document.createElement("div");
       tools.className = "lot-drawing-tools";
       const draw = document.createElement("button");
@@ -394,7 +402,7 @@
         tools.append(error);
       }
     }
-    if (canManage) {
+    if (canManageLocations) {
       const resizeHandle = document.createElement("button");
       resizeHandle.type = "button";
       resizeHandle.className = "lot-resize-handle";
@@ -1070,6 +1078,141 @@
     return row;
   }
 
+  function formatBoardDate(value) {
+    return String(value || "").replace(/-/g, "/");
+  }
+
+  function makeInspectionReminderRow(reminder) {
+    const row = document.createElement("div");
+    row.className = `inspection-row${reminder.completed ? " completed" : ""}`;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = Boolean(reminder.completed);
+    check.setAttribute("aria-label", `${reminder.plate} ${reminder.label} 完了`);
+    check.addEventListener("change", async () => {
+      check.disabled = true;
+      try {
+        await api(`/api/vehicle-inspections/${reminder.vehicle_id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            inspection_type: reminder.inspection_type,
+            due_date: reminder.due_date,
+            completed: check.checked,
+          }),
+        });
+        await loadBoard();
+      } catch (error) {
+        document.querySelector("#inspection-error").textContent = error.message;
+        check.checked = !check.checked;
+        check.disabled = false;
+      }
+    });
+    const text = document.createElement("span");
+    const label = document.createElement("strong");
+    label.textContent = `${reminder.plate} · ${reminder.label}`;
+    const due = document.createElement("time");
+    due.dateTime = reminder.due_date;
+    due.textContent = formatBoardDate(reminder.due_date);
+    text.append(label, due);
+    row.append(check, text);
+    return row;
+  }
+
+  function renderInspectionReminders() {
+    const list = document.querySelector("#inspection-list");
+    list.replaceChildren();
+    document.querySelector("#inspection-total").textContent =
+      `未完了 ${inspectionReminders.filter((item) => !item.completed).length} / 全${inspectionReminders.length}件`;
+    document.querySelector("#inspection-error").textContent = "";
+    if (!inspectionReminders.length) {
+      const empty = document.createElement("p");
+      empty.className = "status-empty";
+      empty.textContent = "車検・点検予定はありません。";
+      list.append(empty);
+    }
+    for (const reminder of inspectionReminders) list.append(makeInspectionReminderRow(reminder));
+  }
+
+  function makeTaskRow(task, manager = false) {
+    const row = document.createElement("div");
+    row.className = `task-row${task.completed ? " completed" : ""}`;
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = Boolean(task.completed);
+    check.setAttribute("aria-label", `${formatBoardDate(task.scheduled_date)} ${task.content} 完了`);
+    check.addEventListener("change", async () => {
+      check.disabled = true;
+      try {
+        await api(`/api/tasks/${task.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ completed: check.checked }),
+        });
+        await loadBoard();
+      } catch (error) {
+        const target = manager ? document.querySelector("#task-error") : document.querySelector("#task-board-error");
+        target.textContent = error.message;
+        check.checked = !check.checked;
+        check.disabled = false;
+      }
+    });
+    const text = document.createElement("span");
+    text.className = "task-text";
+    const date = document.createElement("time");
+    date.dateTime = task.scheduled_date;
+    date.textContent = formatBoardDate(task.scheduled_date);
+    const content = document.createElement("strong");
+    content.textContent = task.content;
+    text.append(date, content);
+    row.append(check, text);
+    if (manager) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "danger-button";
+      remove.textContent = "削除";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("このタスクを削除しますか？")) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/tasks/${task.id}`, { method: "DELETE" });
+          await loadBoard();
+        } catch (error) {
+          document.querySelector("#task-error").textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      row.append(remove);
+    }
+    return row;
+  }
+
+  function renderTaskManager() {
+    const list = document.querySelector("#task-manager-list");
+    list.replaceChildren();
+    if (!tasks.length) {
+      const empty = document.createElement("p");
+      empty.className = "status-empty";
+      empty.textContent = "タスクはありません。";
+      list.append(empty);
+    }
+    for (const task of tasks) list.append(makeTaskRow(task, true));
+  }
+
+  function renderTasks() {
+    const list = document.querySelector("#task-list");
+    list.replaceChildren();
+    document.querySelector("#task-total").textContent =
+      `未完了 ${tasks.filter((task) => !task.completed).length} / 全${tasks.length}件`;
+    document.querySelector("#task-board-error").textContent = "";
+    if (!tasks.length) {
+      const empty = document.createElement("p");
+      empty.className = "status-empty";
+      empty.textContent = "タスクはありません。";
+      list.append(empty);
+    }
+    for (const task of tasks) list.append(makeTaskRow(task));
+    if (document.querySelector("#task-dialog").open) renderTaskManager();
+  }
+
   function renderJobs() {
     const list = document.querySelector("#job-list");
     list.replaceChildren();
@@ -1143,6 +1286,28 @@
     return `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
   }
 
+  function currentLocalDate() {
+    const now = new Date();
+    return `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  }
+
+  function jobPickerValueFromText(value) {
+    const normalized = String(value).trim().replace(/：/g, ":").replace(/[０-９]/g, (digit) =>
+      String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+    const match = normalized.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})[T\s]+(\d{1,2}):(\d{2})$/);
+    if (!match) return "";
+    const [year, month, day, hour, minute] = match.slice(1).map(Number);
+    const date = new Date(year, month - 1, day, hour, minute);
+    if (date.getFullYear() !== year || date.getMonth() !== month - 1 ||
+        date.getDate() !== day || hour > 23 || minute > 59) return "";
+    return `${String(year).padStart(4, "0")}-${pad2(month)}-${pad2(day)}T${pad2(hour)}:${pad2(minute)}`;
+  }
+
+  function prepareJobPicker(picker) {
+    picker.value = jobPickerValueFromText(document.querySelector("#job-time-text").value) ||
+      currentJobTimeText().replace(/\//g, "-").replace(" ", "T");
+  }
+
   function openJobManager() {
     document.querySelector("#job-error").textContent = "";
     document.querySelector("#add-job-form").reset();
@@ -1161,10 +1326,22 @@
 
   document.querySelector("#catalog-search")?.addEventListener("input", syncCatalogSearch);
   document.querySelector("#job-plate").addEventListener("input", updateJobSuggestions);
+  document.querySelector("#job-time-picker").addEventListener("pointerdown", (event) => {
+    prepareJobPicker(event.currentTarget);
+  });
   document.querySelector("#job-time-button").addEventListener("click", () => {
     const picker = document.querySelector("#job-time-picker");
-    if (picker.showPicker) picker.showPicker();
-    else picker.focus();
+    prepareJobPicker(picker);
+    if (typeof picker.showPicker === "function") {
+      try {
+        picker.showPicker();
+        return;
+      } catch (error) {
+        reportClientError("interaction-error", error, { source: "job-time-picker-show" });
+      }
+    }
+    picker.focus({ preventScroll: true });
+    picker.click();
   });
   document.querySelector("#job-time-picker").addEventListener("change", (event) => {
     if (event.target.value) {
@@ -1195,6 +1372,42 @@
       renderJobManager();
     } catch (failure) {
       error.textContent = failure.message;
+    }
+  });
+
+  document.querySelector("#manage-tasks-button").addEventListener("click", () => {
+    document.querySelector("#task-error").textContent = "";
+    const form = document.querySelector("#add-task-form");
+    form.reset();
+    form.elements.scheduled_date.value = currentLocalDate();
+    renderTaskManager();
+    document.querySelector("#task-dialog").showModal();
+  });
+  document.querySelector("#close-task-dialog").addEventListener("click", () =>
+    document.querySelector("#task-dialog").close());
+  document.querySelector("#add-task-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const error = document.querySelector("#task-error");
+    error.textContent = "";
+    if (!form.reportValidity()) return;
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api("/api/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          scheduled_date: form.elements.scheduled_date.value,
+          content: form.elements.content.value,
+        }),
+      });
+      form.elements.content.value = "";
+      await loadBoard();
+      form.elements.scheduled_date.value = currentLocalDate();
+    } catch (failure) {
+      error.textContent = failure.message;
+    } finally {
+      submit.disabled = false;
     }
   });
 
@@ -1688,7 +1901,7 @@
   }
 
   function openLocationManager() {
-    if (!canManage) return;
+    if (!canManageLocations) return;
     locationError.textContent = "";
     renderLocationManager();
     locationDialog.showModal();
@@ -2122,7 +2335,6 @@
   }
 
   function openVehicle(vehicle = null) {
-    if (!vehicle && !canManage) return;
     vehicleForm.reset();
     formError.textContent = "";
     document.querySelector("#dialog-title").textContent = vehicle ? "車両情報を編集" : "車両を追加";
@@ -2143,6 +2355,8 @@
     inspectionMarks = vehicle?.inspection_marks?.map((mark) => ({ ...mark })) || [];
     selectedDamageTypeId = null;
     renderAssessmentFields(vehicle?.assessment_values || {});
+    vehicleForm.elements.inspection_expiry_date.value = vehicle?.inspection_expiry_date || "";
+    vehicleForm.elements.statutory_inspection_date.value = vehicle?.statutory_inspection_date || "";
     vehicleForm.elements.notes.value = vehicle?.notes || "";
     renderInspectionDiagram();
     dialog.showModal();
@@ -2475,6 +2689,8 @@
       vehicle_type: form.get("vehicle_type"),
       options: form.getAll("options"),
       notes: form.get("notes"),
+      inspection_expiry_date: form.get("inspection_expiry_date"),
+      statutory_inspection_date: form.get("statutory_inspection_date"),
     };
     payload.status_ids = form.getAll("status_ids").map(Number);
     payload.assessment_values = collectAssessmentValues();

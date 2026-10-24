@@ -148,6 +148,8 @@ function openDatabase(databasePath) {
       needs_repair INTEGER NOT NULL DEFAULT 0 CHECK(needs_repair IN (0, 1)),
       options TEXT NOT NULL DEFAULT '[]',
       notes TEXT NOT NULL DEFAULT '',
+      inspection_expiry_date TEXT,
+      statutory_inspection_date TEXT,
       tenant_id INTEGER NOT NULL REFERENCES tenants(id)
     );
     CREATE TABLE IF NOT EXISTS sessions (
@@ -199,6 +201,12 @@ function openDatabase(databasePath) {
   }
   if (!columns.has("notes")) {
     db.exec("ALTER TABLE vehicles ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.has("inspection_expiry_date")) {
+    db.exec("ALTER TABLE vehicles ADD COLUMN inspection_expiry_date TEXT");
+  }
+  if (!columns.has("statutory_inspection_date")) {
+    db.exec("ALTER TABLE vehicles ADD COLUMN statutory_inspection_date TEXT");
   }
   const headquartersId = db.prepare("SELECT id FROM tenants WHERE is_headquarters = 1").get()?.id;
   if (!headquartersId) throw new Error("Headquarters tenant is missing.");
@@ -264,13 +272,17 @@ function openDatabase(databasePath) {
           needs_repair INTEGER NOT NULL DEFAULT 0 CHECK(needs_repair IN (0, 1)),
           options TEXT NOT NULL DEFAULT '[]',
           notes TEXT NOT NULL DEFAULT '',
+          inspection_expiry_date TEXT,
+          statutory_inspection_date TEXT,
           tenant_id INTEGER NOT NULL REFERENCES tenants(id)
         );
         INSERT INTO vehicles_tenant_new
           (id, external_id, plate, vehicle_type, parking_lot_id, position_x, position_y,
-           unwashed, no_fuel, needs_repair, options, notes, tenant_id)
+           unwashed, no_fuel, needs_repair, options, notes,
+           inspection_expiry_date, statutory_inspection_date, tenant_id)
         SELECT id, external_id, plate, vehicle_type, parking_lot_id, position_x, position_y,
-               unwashed, no_fuel, needs_repair, options, notes, tenant_id
+               unwashed, no_fuel, needs_repair, options, notes,
+               inspection_expiry_date, statutory_inspection_date, tenant_id
         FROM vehicles;
         DROP TABLE vehicles;
         ALTER TABLE vehicles_tenant_new RENAME TO vehicles;
@@ -425,6 +437,23 @@ function openDatabase(databasePath) {
       completed_at TEXT
     );
     CREATE INDEX IF NOT EXISTS jobs_tenant_idx ON jobs(tenant_id, completed, scheduled_at);
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      id INTEGER PRIMARY KEY,
+      tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      scheduled_date TEXT NOT NULL,
+      content TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0, 1)),
+      completed_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS scheduled_tasks_tenant_idx
+      ON scheduled_tasks(tenant_id, scheduled_date, completed);
+    CREATE TABLE IF NOT EXISTS vehicle_inspection_completions (
+      vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+      inspection_type TEXT NOT NULL CHECK(inspection_type IN ('vehicle_inspection', 'statutory_inspection')),
+      due_date TEXT NOT NULL,
+      completed_at TEXT NOT NULL,
+      PRIMARY KEY (vehicle_id, inspection_type, due_date)
+    );
   `);
   const optionColumns = new Set(
     db.prepare("PRAGMA table_info(vehicle_option_types)").all().map((column) => column.name),

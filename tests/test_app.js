@@ -171,7 +171,9 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   const html = fs.readFileSync(path.join(__dirname, "..", "static", "index.html"), "utf8");
   const script = fs.readFileSync(path.join(__dirname, "..", "static", "app.js"), "utf8");
   assert.ok(html.indexOf('id="status-panel"') < html.indexOf('class="board-workspace"'));
-  assert.match(html, /<details id="status-panel" open>/);
+  assert.match(html, /<details id="status-panel">/);
+  assert.match(html, /<details id="inspection-panel">/);
+  assert.match(html, /<details id="task-panel">/);
   assert.doesNotMatch(html, /id="manage-statuses-button"/);
   assert.match(html, /id="vehicle-status-options"/);
   assert.match(html, /<fieldset class="option-fields">[\s\S]*?id="manage-options-button"/);
@@ -181,6 +183,10 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
     /id="manage-(?:classes|options|vehicle-statuses|assessment)-button"/);
   assert.match(html, /id="admin-panel-button"[^>]*hidden/);
   assert.match(html, /車両状態評価シート/);
+  assert.match(html, /<h3>車検<\/h3>[\s\S]*?name="inspection_expiry_date"[\s\S]*?name="statutory_inspection_date"/);
+  assert.match(html, /id="inspection-list"/);
+  assert.match(html, /id="task-list"/);
+  assert.match(html, /id="task-dialog"/);
   assert.match(html, /<label>クラス<select name="vehicle_type" required><\/select><\/label>/);
   assert.doesNotMatch(html, /車種・タイプ/);
   assert.match(html, /assessment-fields[\s\S]*?name="notes"[\s\S]*?<\/section>/);
@@ -322,6 +328,82 @@ test("admins create and change employee passwords while protecting credentials a
     username: created.body.employee.username,
     password: "employee-updated-password",
   })).status, 200);
+
+  const dateAfterDays = (days) => {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const [year, month, day] = today.split("-").map(Number);
+    return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+  };
+  const expiryDate = dateAfterDays(15);
+  const statutoryDate = dateAfterDays(30);
+  const vehicle = await employeeAgent.post("/api/vehicles").send({
+    plate: "staff-created-car",
+    vehicle_type: "A-1",
+    inspection_expiry_date: expiryDate,
+    statutory_inspection_date: statutoryDate,
+  });
+  assert.equal(vehicle.status, 201);
+  assert.equal(vehicle.body.inspection_expiry_date, expiryDate);
+  assert.equal(vehicle.body.statutory_inspection_date, statutoryDate);
+  assert.equal((await employeeAgent.post("/api/vehicles").send({
+    plate: "invalid-inspection-date",
+    vehicle_type: "A-1",
+    inspection_expiry_date: "2026-02-30",
+  })).status, 422);
+  let inspections = (await employeeAgent.get("/api/bootstrap")).body.inspection_reminders;
+  assert.deepEqual(inspections.map((item) => item.inspection_type), [
+    "vehicle_inspection", "statutory_inspection",
+  ]);
+  assert.equal((await employeeAgent.patch(`/api/vehicle-inspections/${vehicle.body.id}`).send({
+    inspection_type: "vehicle_inspection",
+    due_date: expiryDate,
+    completed: true,
+  })).status, 200);
+  inspections = (await employeeAgent.get("/api/bootstrap")).body.inspection_reminders;
+  assert.equal(inspections.find((item) => item.inspection_type === "vehicle_inspection").completed, true);
+  application.db.prepare(`
+    UPDATE vehicle_inspection_completions SET completed_at = ?
+    WHERE vehicle_id = ? AND inspection_type = 'vehicle_inspection'
+  `).run(new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(), vehicle.body.id);
+  inspections = (await employeeAgent.get("/api/bootstrap")).body.inspection_reminders;
+  assert.deepEqual(inspections.map((item) => item.inspection_type), ["statutory_inspection"]);
+  assert.equal((await employeeAgent.patch(`/api/vehicle-inspections/${vehicle.body.id}`).send({
+    inspection_type: "statutory_inspection",
+    due_date: dateAfterDays(31),
+    completed: true,
+  })).status, 409);
+
+  const task = await employeeAgent.post("/api/tasks").send({
+    scheduled_date: "2026-11-01",
+    content: "把第四停车场的所有车辆清空",
+  });
+  assert.equal(task.status, 201);
+  assert.equal((await employeeAgent.post("/api/tasks").send({
+    scheduled_date: "2026-02-30",
+    content: "invalid date",
+  })).status, 422);
+  assert.equal((await employeeAgent.patch(`/api/tasks/${task.body.id}`).send({
+    completed: true,
+  })).status, 200);
+  let board = (await employeeAgent.get("/api/bootstrap")).body;
+  assert.equal(board.tasks.find((item) => item.id === task.body.id).completed, 1);
+  const exported = (await agent.get("/api/export/mariadb")).body.tables;
+  assert.ok(exported.scheduled_tasks.some((item) => item.id === task.body.id));
+  assert.ok(exported.vehicle_inspection_completions.some((item) =>
+    item.vehicle_id === vehicle.body.id && item.inspection_type === "vehicle_inspection"));
+  assert.equal(application.purgeTasks(new Date(Date.now() + 36 * 60 * 60 * 1000)), 1);
+  board = (await employeeAgent.get("/api/bootstrap")).body;
+  assert.equal(board.tasks.some((item) => item.id === task.body.id), false);
+
+  const location = await employeeAgent.post("/api/parking-lots").send({ name: "Employee location" });
+  assert.equal(location.status, 201);
+  assert.equal((await employeeAgent.patch(`/api/parking-lots/${location.body.id}`).send({
+    name: "Updated employee location",
+  })).status, 200);
+  assert.equal((await employeeAgent.delete(`/api/parking-lots/${location.body.id}`)).status, 204);
+  assert.equal((await agent.delete(`/api/vehicles/${vehicle.body.id}`)).status, 204);
 
   assert.equal((await agent.delete(`/api/employees/${created.body.employee.id}`)).status, 204);
   assert.deepEqual((await employeeAgent.get("/api/me")).body, { authenticated: false, version: appVersion });
@@ -572,7 +654,7 @@ test("exports tenant vehicle data as a MariaDB migration package without credent
   assert.equal(response.text.includes("password_hash"), false);
 });
 
-test("operator accounts can use the board but cannot add vehicles or manage locations", async () => {
+test("operator accounts can add vehicles and manage locations without admin settings", async () => {
   application.db.prepare("INSERT INTO users (username, password_hash, role, tenant_id) VALUES (?, ?, ?, 1)").run(
     "staff",
     await hashPassword("staff-password-strong"),
@@ -594,23 +676,28 @@ test("operator accounts can use the board but cannot add vehicles or manage loca
     tenant_name: "本店",
   });
   assert.equal((await staffAgent.get("/api/bootstrap")).status, 200);
-  assert.equal((await staffAgent.post("/api/vehicles").send({
-    plate: "staff-add-denied",
+  const staffVehicle = await staffAgent.post("/api/vehicles").send({
+    plate: "staff-add-allowed",
     vehicle_type: "A-1",
-  })).status, 403);
-  assert.equal((await staffAgent.post("/api/parking-lots").send({ name: "staff-add-denied" })).status, 403);
+  });
+  assert.equal(staffVehicle.status, 201);
+  const staffLocation = await staffAgent.post("/api/parking-lots").send({ name: "staff-location-allowed" });
+  assert.equal(staffLocation.status, 201);
+  assert.equal((await staffAgent.patch(`/api/parking-lots/${staffLocation.body.id}`).send({
+    name: "staff-location-renamed",
+  })).status, 200);
+  assert.equal((await staffAgent.delete(`/api/parking-lots/${staffLocation.body.id}`)).status, 204);
+  assert.equal((await agent.delete(`/api/vehicles/${staffVehicle.body.id}`)).status, 204);
   assert.equal((await staffAgent.post("/api/statuses").send({ name: "staff-add-denied" })).status, 403);
   assert.equal((await staffAgent.post("/api/vehicle-options").send({ name: "staff-add-denied" })).status, 403);
   const adminStatus = await agent.post("/api/statuses").send({ name: "admin-only-status" });
   assert.equal(adminStatus.status, 201);
   assert.equal((await staffAgent.delete(`/api/statuses/${adminStatus.body.id}`)).status, 403);
   assert.equal((await agent.delete(`/api/statuses/${adminStatus.body.id}`)).status, 204);
-  assert.equal((await staffAgent.delete("/api/parking-lots/13")).status, 403);
   assert.equal((await staffAgent.delete("/api/franchises/2").send({ confirmation_name: "anything" })).status, 403);
-  assert.equal((await staffAgent.patch("/api/parking-lots/1").send({ name: "staff-rename-denied" })).status, 403);
   assert.equal((await staffAgent.put("/api/parking-lots/order").send({
     ids: Array.from({ length: 13 }, (_, index) => index + 1),
-  })).status, 403);
+  })).status, 200);
   assert.equal((await staffAgent.delete(`/api/vehicles/${vehicleId}`)).status, 403);
   const updated = await staffAgent.patch(`/api/vehicles/${vehicleId}`).send({ no_fuel: true });
   assert.equal(updated.status, 200);
@@ -1342,6 +1429,9 @@ test("translates the interface to Chinese and English without altering Japanese"
   const { translate } = window.gutsI18n;
   assert.equal(translate("ジョブ", "ja"), "ジョブ");
   assert.equal(translate("ジョブ", "en"), "Dispatch");
+  assert.equal(translate("点検", "zh"), "点检");
+  assert.equal(translate("タスク", "en"), "Tasks");
+  assert.equal(translate("車検満了日", "zh"), "车检到期日");
   assert.equal(translate("ステータス別の車両", "en"), "Follow-up");
   assert.equal(translate("車両一覧", "zh"), "车辆一览");
   assert.equal(translate("3 台", "en"), "3 vehicles");
@@ -1358,12 +1448,17 @@ test("wires catalog search, token blink and labelled job time inputs", () => {
   assert.match(html, /id="catalog-search"/);
   assert.match(html, /<details id="catalog-panel" open>/);
   assert.doesNotMatch(html, /board-search/);
-  assert.match(html, /<details id="job-panel" open>/);
-  assert.match(css, /#status-panel,\s*#job-panel\s*\{[^}]*background:\s*var\(--surface\)/);
+  assert.match(html, /<details id="job-panel">/);
+  assert.match(css, /#status-panel,\s*#job-panel,\s*#inspection-panel,\s*#task-panel\s*\{[^}]*background:\s*var\(--surface\)/);
   assert.match(html, /貼り付け用可/);
   assert.match(html, /車番で検索/);
   assert.match(script, /token-blink/);
   assert.match(script, /catalog-search/);
+  assert.match(script, /picker\.click\(\)/);
+  assert.match(script, /\/api\/tasks/);
+  assert.match(script, /\/api\/vehicle-inspections/);
+  assert.match(script, /manage-locations-button"\)\.hidden = !canManageLocations/);
+  assert.match(script, /add-vehicle-button"\)\.hidden = false/);
   assert.doesNotMatch(script, /board-search/);
   assert.match(css, /@keyframes token-blink/);
   assert.match(css, /@media \(max-width: 1100px\)[\s\S]*?\.vehicle-catalog \{[^}]*order: -1;/);
