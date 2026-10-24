@@ -184,6 +184,8 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   assert.match(html, /id="admin-panel-button"[^>]*hidden/);
   assert.match(html, /車両状態評価シート/);
   assert.match(html, /<h3>車検<\/h3>[\s\S]*?name="inspection_expiry_date"[\s\S]*?name="statutory_inspection_date"/);
+  assert.ok(html.indexOf('<h3>車両状態評価シート</h3>') < html.indexOf('<section class="vehicle-inspection-dates">'));
+  assert.ok(html.indexOf('<section class="vehicle-inspection-dates">') < html.indexOf('<div id="assessment-fields">'));
   assert.match(html, /id="inspection-list"/);
   assert.match(html, /id="task-list"/);
   assert.match(html, /id="task-dialog"/);
