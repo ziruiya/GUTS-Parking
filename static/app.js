@@ -25,6 +25,7 @@
   let vehicles = [];
   let vehicleTypes = [];
   let vehicleClasses = [];
+  let vehicleModels = [];
   let stores = [];
   let lotDistances = [];
   let storeLotDistances = [];
@@ -163,6 +164,7 @@
     vehicles = data.vehicles;
     vehicleTypes = data.vehicle_types;
     vehicleClasses = data.vehicle_classes || [];
+    vehicleModels = data.vehicle_models || [];
     stores = data.stores || [];
     lotDistances = data.lot_distances || [];
     storeLotDistances = data.store_lot_distances || [];
@@ -659,7 +661,9 @@
     token.dataset.id = vehicle.id;
     token.style.left = `${8 + vehicle.position_x * 84}%`;
     token.style.top = `${10 + vehicle.position_y * 80}%`;
-    token.setAttribute("aria-label", `${vehicle.plate}、${vehicle.vehicle_type}`);
+    const vehicleLabel = `${vehicle.plate}、${vehicle.vehicle_type}${vehicle.vehicle_model ? `、${vehicle.vehicle_model}` : ""}`;
+    token.setAttribute("aria-label", vehicleLabel);
+    token.title = vehicleLabel;
     const statusIcons = statuses
       .filter((status) => vehicle.status_ids?.includes(status.id))
       .map((status) => status.icon);
@@ -814,6 +818,7 @@
       return option;
     }));
     if (vehicleTypes.includes(current)) select.value = current;
+    renderVehicleModelChoices(vehicleForm.elements.vehicle_model.value);
     const filters = document.querySelector("#vehicle-type-filters");
     const active = activeVehicleType;
     filters.replaceChildren();
@@ -830,6 +835,28 @@
       });
       filters.append(button);
     }
+  }
+
+  function renderVehicleModelChoices(selectedModel = "", preserveLegacyModel = false) {
+    const select = vehicleForm.elements.vehicle_model;
+    if (!select) return;
+    const vehicleType = vehicleForm.elements.vehicle_type.value;
+    const models = vehicleModels.filter((model) => model.vehicle_type === vehicleType);
+    const hasLegacyModel = preserveLegacyModel && selectedModel &&
+      !models.some((model) => model.name === selectedModel);
+    const choices = [
+      { value: "", label: models.length ? "車種を選択してください" : "車種が未登録です" },
+      ...(hasLegacyModel ? [{ value: selectedModel, label: `${selectedModel}（登録終了）` }] : []),
+      ...models.map((model) => ({ value: model.name, label: model.name })),
+    ];
+    select.replaceChildren(...choices.map(({ value, label }) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      return option;
+    }));
+    select.value = selectedModel;
+    select.required = models.length > 0;
   }
 
   function renderVehicleCatalog(boardVehicles) {
@@ -860,7 +887,7 @@
       plate.textContent = vehicle.plate;
       const details = document.createElement("span");
       const lot = lots.find((entry) => entry.id === vehicle.parking_lot_id);
-      details.textContent = `${vehicle.vehicle_type} · ${lot?.name || "未配置"}${vehicle.options?.length ? ` · ${vehicle.options.join("・")}` : ""}`;
+      details.textContent = `${vehicle.vehicle_type}${vehicle.vehicle_model ? ` · ${vehicle.vehicle_model}` : ""} · ${lot?.name || "未配置"}${vehicle.options?.length ? ` · ${vehicle.options.join("・")}` : ""}`;
       item.append(plate, details);
       item.addEventListener("click", () => {
         const location = document.querySelector(`[data-lot-id="${vehicle.parking_lot_id}"]`);
@@ -2163,8 +2190,10 @@
     const list = document.querySelector("#class-manager-list");
     list.replaceChildren();
     for (const item of vehicleClasses) {
+      const entry = document.createElement("section");
+      entry.className = "class-manager-entry";
       const row = document.createElement("div");
-      row.className = "status-manager-row class-manager-row";
+      row.className = "class-manager-row";
       const color = document.createElement("input");
       color.type = "color";
       color.value = item.color;
@@ -2205,7 +2234,91 @@
         }
       });
       row.append(color, name, save, remove);
-      list.append(row);
+      entry.append(row);
+
+      const classModels = vehicleModels.filter((model) => model.vehicle_class_id === item.id);
+      const details = document.createElement("details");
+      details.className = "class-model-manager";
+      const summary = document.createElement("summary");
+      const summaryLabel = document.createElement("span");
+      summaryLabel.textContent = "車種を管理";
+      const modelCount = document.createElement("span");
+      modelCount.className = "class-model-count";
+      modelCount.textContent = String(classModels.length);
+      summary.append(summaryLabel, modelCount);
+      details.append(summary);
+      const modelList = document.createElement("div");
+      modelList.className = "class-model-list";
+      for (const model of classModels) {
+        const modelRow = document.createElement("div");
+        modelRow.className = "class-model-row";
+        const modelName = document.createElement("input");
+        modelName.type = "text";
+        modelName.maxLength = 40;
+        modelName.value = model.name;
+        modelName.setAttribute("aria-label", `${item.name}の車種名`);
+        const saveModel = document.createElement("button");
+        saveModel.type = "button";
+        saveModel.className = "quiet-button";
+        saveModel.textContent = "保存";
+        saveModel.addEventListener("click", async () => {
+          classError.textContent = "";
+          try {
+            await api(`/api/vehicle-models/${model.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ name: modelName.value }),
+            });
+            await loadBoard();
+          } catch (error) {
+            classError.textContent = error.message;
+          }
+        });
+        const deleteModel = document.createElement("button");
+        deleteModel.type = "button";
+        deleteModel.className = "danger-button";
+        deleteModel.textContent = "削除";
+        deleteModel.addEventListener("click", async () => {
+          classError.textContent = "";
+          if (!window.confirm(`「${item.name} · ${model.name}」を削除しますか？`)) return;
+          try {
+            await api(`/api/vehicle-models/${model.id}`, { method: "DELETE" });
+            await loadBoard();
+          } catch (error) {
+            classError.textContent = error.message;
+          }
+        });
+        modelRow.append(modelName, saveModel, deleteModel);
+        modelList.append(modelRow);
+      }
+      const addModelForm = document.createElement("form");
+      addModelForm.className = "add-class-model-form";
+      const addModelInput = document.createElement("input");
+      addModelInput.name = "name";
+      addModelInput.required = true;
+      addModelInput.maxLength = 40;
+      addModelInput.placeholder = "例：ミラ";
+      addModelInput.setAttribute("aria-label", `${item.name}の新しい車種名`);
+      const addModelButton = document.createElement("button");
+      addModelButton.type = "submit";
+      addModelButton.className = "quiet-button";
+      addModelButton.textContent = "車種を追加";
+      addModelForm.append(addModelInput, addModelButton);
+      addModelForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        classError.textContent = "";
+        try {
+          await api(`/api/vehicle-classes/${item.id}/models`, {
+            method: "POST",
+            body: JSON.stringify({ name: addModelInput.value }),
+          });
+          await loadBoard();
+        } catch (error) {
+          classError.textContent = error.message;
+        }
+      });
+      details.append(modelList, addModelForm);
+      entry.append(details);
+      list.append(entry);
     }
   }
 
@@ -2350,6 +2463,7 @@
     vehicleForm.elements.id.value = vehicle?.id || "";
     vehicleForm.elements.plate.value = vehicle?.plate || "";
     vehicleForm.elements.vehicle_type.value = vehicle?.vehicle_type || vehicleTypes[0] || "";
+    renderVehicleModelChoices(vehicle?.vehicle_model || "", Boolean(vehicle));
     renderVehicleOptions(vehicle);
     renderVehicleStatusOptions(vehicle);
     inspectionMarks = vehicle?.inspection_marks?.map((mark) => ({ ...mark })) || [];
@@ -2486,6 +2600,7 @@
   document.querySelector("#export-vehicles-button").addEventListener("click", downloadMariaDbExport);
   document.querySelector("#close-employee-dialog").addEventListener("click", () => employeeDialog.close());
   document.querySelector("#manage-classes-button").addEventListener("click", openClassManager);
+  vehicleForm.elements.vehicle_type.addEventListener("change", () => renderVehicleModelChoices());
   document.querySelector("#manage-vehicle-statuses-button").addEventListener("click", openStatusManager);
   document.querySelector("#manage-options-button").addEventListener("click", () => {
     document.querySelector("#option-error").textContent = "";
@@ -2687,6 +2802,7 @@
     const payload = {
       plate: form.get("plate"),
       vehicle_type: form.get("vehicle_type"),
+      vehicle_model: form.get("vehicle_model"),
       options: form.getAll("options"),
       notes: form.get("notes"),
       inspection_expiry_date: form.get("inspection_expiry_date"),

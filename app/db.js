@@ -10,6 +10,18 @@ const LOT_NAMES = [
   "立駐",
 ];
 const VEHICLE_TYPES = ["A-1", "A-2", "A-2P", "B", "B軽トラ", "C-1", "C-2", "D", "H-1", "H-2", "その他"];
+const DEFAULT_VEHICLE_MODELS = {
+  "A-1": ["ミニカ", "アルト", "ミラ"],
+  "A-2": ["EKワゴン", "ライフ", "MRワゴン"],
+  "A-2P": ["EKワゴン", "EKスペース", "ムーブ"],
+  B: ["ハイゼット", "ミニキャブ", "アクティ"],
+  "B軽トラ": ["ミニキャブトラック"],
+  "C-1": ["ヴィッツ", "マーチ", "フィット"],
+  "C-2": ["プロボックス", "ランサーワゴン"],
+  D: ["ステップワゴン", "ノア", "ヴィッシュ"],
+  "H-1": ["アクア", "フィットハイブリッド"],
+  "H-2": ["プリウス", "インサイト", "フィットシャトル"],
+};
 const DEFAULT_CLASS_COLORS = [
   "#4f86f7", "#9b6ad8", "#f0a043", "#38a9d0", "#e56b7a",
   "#c7b23c", "#6f8794", "#7fb24f", "#d98a57", "#6d78c8", "#9aa5b1",
@@ -65,6 +77,18 @@ function seedTenantVehicleClasses(db, tenantId) {
   `).all(tenantId, tenantId);
   let order = VEHICLE_TYPES.length;
   for (const { name } of extra) addClass.run(tenantId, name, "#9aa5b1", order++);
+}
+
+function seedTenantVehicleModels(db, tenantId) {
+  const addModel = db.prepare(`
+    INSERT OR IGNORE INTO vehicle_models (tenant_id, vehicle_class_id, name, display_order)
+    SELECT ?, id, ?, ?
+    FROM vehicle_classes
+    WHERE tenant_id = ? AND name = ?
+  `);
+  for (const [className, names] of Object.entries(DEFAULT_VEHICLE_MODELS)) {
+    names.forEach((name, index) => addModel.run(tenantId, name, index, tenantId, className));
+  }
 }
 
 function seedTenantAssessment(db, tenantId) {
@@ -140,6 +164,7 @@ function openDatabase(databasePath) {
       external_id TEXT UNIQUE,
       plate TEXT NOT NULL,
       vehicle_type TEXT NOT NULL,
+      vehicle_model TEXT NOT NULL DEFAULT '',
       parking_lot_id INTEGER REFERENCES parking_lots(id) ON DELETE SET NULL,
       position_x REAL NOT NULL DEFAULT 0.5 CHECK(position_x >= 0 AND position_x <= 1),
       position_y REAL NOT NULL DEFAULT 0.5 CHECK(position_y >= 0 AND position_y <= 1),
@@ -201,6 +226,9 @@ function openDatabase(databasePath) {
   }
   if (!columns.has("notes")) {
     db.exec("ALTER TABLE vehicles ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+  }
+  if (!columns.has("vehicle_model")) {
+    db.exec("ALTER TABLE vehicles ADD COLUMN vehicle_model TEXT NOT NULL DEFAULT ''");
   }
   if (!columns.has("inspection_expiry_date")) {
     db.exec("ALTER TABLE vehicles ADD COLUMN inspection_expiry_date TEXT");
@@ -264,6 +292,7 @@ function openDatabase(databasePath) {
           external_id TEXT,
           plate TEXT NOT NULL,
           vehicle_type TEXT NOT NULL,
+          vehicle_model TEXT NOT NULL DEFAULT '',
           parking_lot_id INTEGER REFERENCES parking_lots(id) ON DELETE SET NULL,
           position_x REAL NOT NULL DEFAULT 0.5 CHECK(position_x >= 0 AND position_x <= 1),
           position_y REAL NOT NULL DEFAULT 0.5 CHECK(position_y >= 0 AND position_y <= 1),
@@ -277,10 +306,10 @@ function openDatabase(databasePath) {
           tenant_id INTEGER NOT NULL REFERENCES tenants(id)
         );
         INSERT INTO vehicles_tenant_new
-          (id, external_id, plate, vehicle_type, parking_lot_id, position_x, position_y,
+          (id, external_id, plate, vehicle_type, vehicle_model, parking_lot_id, position_x, position_y,
            unwashed, no_fuel, needs_repair, options, notes,
            inspection_expiry_date, statutory_inspection_date, tenant_id)
-        SELECT id, external_id, plate, vehicle_type, parking_lot_id, position_x, position_y,
+        SELECT id, external_id, plate, vehicle_type, vehicle_model, parking_lot_id, position_x, position_y,
                unwashed, no_fuel, needs_repair, options, notes,
                inspection_expiry_date, statutory_inspection_date, tenant_id
         FROM vehicles;
@@ -513,6 +542,14 @@ function openDatabase(databasePath) {
       display_order INTEGER NOT NULL DEFAULT 0,
       UNIQUE (tenant_id, name COLLATE NOCASE)
     );
+    CREATE TABLE IF NOT EXISTS vehicle_models (
+      id INTEGER PRIMARY KEY,
+      tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      vehicle_class_id INTEGER NOT NULL REFERENCES vehicle_classes(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      display_order INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (vehicle_class_id, name COLLATE NOCASE)
+    );
     CREATE TABLE IF NOT EXISTS stores (
       id INTEGER PRIMARY KEY,
       tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -561,6 +598,21 @@ function openDatabase(databasePath) {
       throw error;
     }
   }
+  const vehicleModelsMigration = "vehicle-models-v1";
+  if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(vehicleModelsMigration)) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const tenant of db.prepare("SELECT id FROM tenants").all()) {
+        seedTenantVehicleModels(db, tenant.id);
+      }
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(vehicleModelsMigration);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      db.close();
+      throw error;
+    }
+  }
   const assessmentMigration = "vehicle-assessment-sheet-v1";
   if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(assessmentMigration)) {
     db.exec("BEGIN IMMEDIATE");
@@ -588,5 +640,6 @@ module.exports = {
   seedTenantAssessment,
   seedTenantStatuses,
   seedTenantVehicleClasses,
+  seedTenantVehicleModels,
   seedTenantVehicleOptions,
 };

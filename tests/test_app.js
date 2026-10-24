@@ -188,6 +188,7 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   assert.match(html, /id="task-list"/);
   assert.match(html, /id="task-dialog"/);
   assert.match(html, /<label>クラス<select name="vehicle_type" required><\/select><\/label>/);
+  assert.match(html, /<label class="vehicle-model-field">車種<select name="vehicle_model" id="vehicle-model"><\/select><\/label>/);
   assert.doesNotMatch(html, /車種・タイプ/);
   assert.match(html, /assessment-fields[\s\S]*?name="notes"[\s\S]*?<\/section>/);
   assert.match(html, /車体の損傷位置/);
@@ -647,6 +648,8 @@ test("exports tenant vehicle data as a MariaDB migration package without credent
   assert.equal(exported.target_database, "MariaDB 10.11.10");
   assert.equal(exported.tenant.name, "本店");
   assert.equal(exported.tables.vehicles.find((vehicle) => vehicle.id === vehicleId).plate, "評価保持テスト");
+  assert.equal(exported.tables.vehicles.find((vehicle) => vehicle.id === vehicleId).vehicle_model, "");
+  assert.ok(exported.tables.vehicle_models.some((model) => model.name === "ミニカ"));
   assert.equal(exported.tables.vehicle_assessment_values.length > 0, true);
   assert.equal(exported.tables.vehicle_damage_marks.length, 1);
   assert.equal(Object.hasOwn(exported.tables, "users"), false);
@@ -690,6 +693,9 @@ test("operator accounts can add vehicles and manage locations without admin sett
   assert.equal((await agent.delete(`/api/vehicles/${staffVehicle.body.id}`)).status, 204);
   assert.equal((await staffAgent.post("/api/statuses").send({ name: "staff-add-denied" })).status, 403);
   assert.equal((await staffAgent.post("/api/vehicle-options").send({ name: "staff-add-denied" })).status, 403);
+  const defaultClassId = (await agent.get("/api/bootstrap")).body.vehicle_classes[0].id;
+  assert.equal((await staffAgent.post(`/api/vehicle-classes/${defaultClassId}/models`)
+    .send({ name: "staff-model-denied" })).status, 403);
   const adminStatus = await agent.post("/api/statuses").send({ name: "admin-only-status" });
   assert.equal(adminStatus.status, 201);
   assert.equal((await staffAgent.delete(`/api/statuses/${adminStatus.body.id}`)).status, 403);
@@ -753,6 +759,8 @@ test("headquarters can create isolated franchise stores and suspend or restore a
   assert.equal(franchiseBoard.parking_lots.length, 13);
   assert.equal(new Set(franchiseBoard.parking_lots.map((lot) => lot.name)).size, 13);
   assert.equal(franchiseBoard.vehicles.length, 0);
+  assert.deepEqual(franchiseBoard.vehicle_models
+    .filter((model) => model.vehicle_type === "A-1").map((model) => model.name), ["ミニカ", "アルト", "ミラ"]);
   assert.equal(franchiseBoard.statuses.some((status) =>
     status.id === headquartersOnlyStatus.body.id), false);
   assert.equal(franchiseBoard.assessment_fields.some((field) =>
@@ -1378,6 +1386,7 @@ test("flattens previous board sections into peer locations without losing vehicl
       [0.37, 0.62, 1, 1],
     );
     assert.deepEqual(JSON.parse(vehicle.options), ["ETC"]);
+    assert.equal(vehicle.vehicle_model, "");
     assert.deepEqual(
       migrated.prepare("SELECT s.key FROM vehicle_status_assignments a JOIN vehicle_statuses s ON s.id = a.status_id WHERE a.vehicle_id = ? ORDER BY s.key")
         .all(vehicle.id).map((status) => status.key),
@@ -1511,6 +1520,20 @@ test("manages class colours, lot priority, stores and distances", async () => {
   assert.equal((await agent.post("/api/vehicle-classes").send({ name: "z-1", color: "#112233" })).status, 409);
   const recolored = await agent.patch(`/api/vehicle-classes/${created.body.id}`).send({ color: "#445566", name: "Z-2" });
   assert.equal(recolored.status, 200);
+  const defaults = Object.fromEntries(boot.vehicle_classes.map((vehicleClass) => [
+    vehicleClass.name,
+    boot.vehicle_models.filter((model) => model.vehicle_type === vehicleClass.name).map((model) => model.name),
+  ]));
+  assert.deepEqual(defaults["A-1"], ["ミニカ", "アルト", "ミラ"]);
+  assert.deepEqual(defaults["A-2"], ["EKワゴン", "ライフ", "MRワゴン"]);
+  assert.deepEqual(defaults["D"], ["ステップワゴン", "ノア", "ヴィッシュ"]);
+  const addedModel = await agent.post(`/api/vehicle-classes/${created.body.id}/models`)
+    .send({ name: "オリジナル車種" });
+  assert.equal(addedModel.status, 201);
+  assert.equal((await agent.post(`/api/vehicle-classes/${created.body.id}/models`)
+    .send({ name: "オリジナル車種" })).status, 409);
+  assert.equal((await agent.post(`/api/vehicle-classes/${created.body.id}/models`)
+    .send({ name: "   " })).status, 422);
   const lot = boot.parking_lots[0];
   const patched = await agent.patch(`/api/parking-lots/${lot.id}`).send({
     capacity: 5, is_active: false, class_priority: ["Z-2", "A-1"],
@@ -1522,8 +1545,28 @@ test("manages class colours, lot priority, stores and distances", async () => {
   assert.equal((await agent.patch(`/api/parking-lots/${lot.id}`).send({ class_priority: ["nope"] })).status, 422);
   assert.equal((await agent.patch(`/api/parking-lots/${lot.id}`).send({ capacity: -1 })).status, 422);
   assert.equal((await agent.patch(`/api/parking-lots/${lot.id}`).send({ capacity: null, is_active: true })).status, 200);
-  const vehicle = await agent.post("/api/vehicles").send({ plate: "品川 300 ち 77-77", vehicle_type: "Z-2" });
+  const vehicle = await agent.post("/api/vehicles").send({
+    plate: "品川 300 ち 77-77", vehicle_type: "Z-2", vehicle_model: "オリジナル車種",
+  });
   assert.equal(vehicle.status, 201);
+  assert.equal(vehicle.body.vehicle_model, "オリジナル車種");
+  assert.equal((await agent.post("/api/vehicles").send({
+    plate: "wrong-model", vehicle_type: "Z-2", vehicle_model: "ミニカ",
+  })).status, 422);
+  const renamedModel = await agent.patch(`/api/vehicle-models/${addedModel.body.id}`)
+    .send({ name: "変更後車種" });
+  assert.equal(renamedModel.status, 200);
+  assert.equal((await agent.get("/api/bootstrap")).body.vehicles
+    .find((item) => item.id === vehicle.body.id).vehicle_model, "変更後車種");
+  assert.equal((await agent.patch(`/api/vehicle-models/${addedModel.body.id}`)
+    .send({ name: "変更後車種" })).status, 200);
+  assert.equal((await agent.patch(`/api/vehicles/${vehicle.body.id}`)
+    .send({ vehicle_model: "未登録車種" })).status, 422);
+  assert.equal((await agent.delete(`/api/vehicle-models/${addedModel.body.id}`)).status, 204);
+  const retainedModel = await agent.patch(`/api/vehicles/${vehicle.body.id}`)
+    .send({ vehicle_model: "変更後車種" });
+  assert.equal(retainedModel.status, 200);
+  assert.equal(retainedModel.body.vehicle_model, "変更後車種");
   assert.equal((await agent.delete(`/api/vehicle-classes/${created.body.id}`)).status, 409);
   await agent.delete(`/api/vehicles/${vehicle.body.id}`);
   assert.equal((await agent.delete(`/api/vehicle-classes/${created.body.id}`)).status, 204);

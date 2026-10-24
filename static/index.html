@@ -166,6 +166,7 @@
         <button type="button" id="manage-classes-button" class="quiet-button inline-manage-button">クラスと色を管理</button>
         <p class="default-location-note">追加した車両は一番上の位置に登録されます。</p>
       </div>
+      <label class="vehicle-model-field">車種<select name="vehicle_model" id="vehicle-model"></select></label>
       <fieldset class="option-fields">
         <legend>オプション <button type="button" id="manage-options-button" class="quiet-button inline-manage-button">追加・削除</button></legend>
         <div id="vehicle-option-choices" class="status-option-list"></div>
@@ -321,7 +322,7 @@
         <div><h2>クラスと色を管理</h2></div>
         <button type="button" id="close-class-dialog" class="close-button" aria-label="閉じる">×</button>
       </div>
-      <div id="class-manager-list" class="status-manager-list"></div>
+      <div id="class-manager-list" class="class-manager-list"></div>
       <form id="add-class-form" class="add-class-form">
         <label>新しいクラス名<input name="name" required maxlength="40" placeholder="例：E-1"></label>
         <label>色<input name="color" type="color" value="#4f86f7" aria-label="クラスの色"></label>

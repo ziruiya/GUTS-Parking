@@ -40,6 +40,13 @@
     ["ナンバー", "车牌号", "Plate"],
     ["例: 品川 500 あ 1234", "例：品川 500 あ 1234", "e.g. Shinagawa 500 A 1234"],
     ["クラス", "级别", "Class"],
+    ["車種", "车型", "Vehicle model"],
+    ["車種を選択してください", "请选择车型", "Select a vehicle model"],
+    ["車種が未登録です", "尚未登记车型", "No models registered"],
+    ["車種を管理", "管理车型", "Manage models"],
+    ["車種を追加", "添加车型", "Add model"],
+    ["新しい車種名", "新车型名称", "New model name"],
+    ["例：ミラ", "例：Mira", "e.g. Mira"],
     ["追加した車両は一番上の位置に登録されます。", "添加的车辆会登记在最上方的位置。", "New vehicles are placed in the top location."],
     ["オプション", "选项", "Options"],
     ["オプションを追加・削除", "添加/删除选项", "Add / remove options"],
@@ -221,6 +228,11 @@
     ["同じ名前のステータスは既に登録されています。", "已存在同名状态。", "A status with that name already exists."],
     ["同じ名前の評価項目は既に登録されています。", "已存在同名评估项目。", "A check item with that name already exists."],
     ["同じ名前の問題種類は既に登録されています。", "已存在同名问题种类。", "An issue type with that name already exists."],
+    ["車種名は1〜40文字で入力してください。", "车型名称请输入1〜40个字符。", "Model names must be 1–40 characters."],
+    ["同じクラスに同じ車種が既にあります。", "该车型分类下已存在同名车型。", "That model already exists in this class."],
+    ["車種は40文字以内で指定してください。", "车型名称不能超过40个字符。", "Model names must be 40 characters or fewer."],
+    ["車種は選択したクラスに登録された項目から指定してください。", "请选择所选车型分类中已登记的车型。", "Choose a model registered under the selected class."],
+    ["車種が見つかりません。", "找不到该车型。", "Vehicle model not found."],
     ["問題の名前・アイコン・色を正しく指定してください。", "请正确指定问题名称・图标・颜色。", "Specify a valid issue name, icon and color."],
     ["問題種類が見つかりません。", "找不到该问题种类。", "Issue type not found."],
     ["線は最大100本までで、色と座標を正しく指定してください。", "线条最多100条，请正确指定颜色和坐标。", "Up to 100 lines; specify valid colors and coordinates."],
@@ -266,6 +278,7 @@
     [/予備/g, "备用", "Spare"],
     [/立駐/g, "立体停车", "Tower"],
     [/未配置/g, "未配置", "Unassigned"],
+    [/（登録終了）/g, "（已停用）", " (retired)"],
   ];
 
   const exact = new Map(ENTRIES.map((entry) => [entry[0], entry]));
