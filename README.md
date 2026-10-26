@@ -117,6 +117,8 @@ proxy_set_header Connection "upgrade";
 
 `https://ドメイン/api/me` が `{"authenticated":false}` を返し、トップにログイン画面が出れば完了です。本番では `.env` の `COOKIE_SECURE=1` を維持してください。
 
+ログイン状態は操作のたびに延長され、30 日間操作がない場合に再ログインが必要です。
+
 ### 更新（`rental update`）
 初回のみ、root で次を実行してコマンドを登録します。
 

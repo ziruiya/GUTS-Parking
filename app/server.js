@@ -28,6 +28,7 @@ const { ErrorLogger } = require("./error-logger");
 const STATIC_DIR = path.resolve(__dirname, "..", "static");
 const THREE_BUILD_DIR = path.resolve(__dirname, "..", "node_modules", "three", "build");
 const STATUSES = DEFAULT_STATUSES.map((status) => status.key);
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const INSPECTION_DATE_FIELDS = {
   vehicle_inspection: "inspection_expiry_date",
   statutory_inspection: "statutory_inspection_date",
@@ -523,7 +524,7 @@ function createApplication(options = {}) {
       httpOnly: true,
       secure: cookieSecure,
       sameSite: "strict",
-      maxAge: 12 * 60 * 60 * 1000,
+      maxAge: SESSION_MAX_AGE_MS,
     },
   }));
 

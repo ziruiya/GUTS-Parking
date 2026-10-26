@@ -206,7 +206,7 @@ test("uses full-width parking cards and compact controls on phone layouts", () =
   const phoneLayout = stylesheet.slice(stylesheet.indexOf("@media (max-width: 560px)"));
   assert.match(phoneLayout, /\.parking-grid\s*\{\s*display:\s*grid;\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(phoneLayout, /\.lot-card\s*\{\s*width:\s*100%;\s*max-width:\s*100%/);
-  assert.match(phoneLayout, /\.topbar\s*\{\s*min-height:\s*62px;\s*height:\s*auto/);
+  assert.match(phoneLayout, /\.topbar\s*\{[^}]*min-height:\s*62px;\s*height:\s*auto/);
   assert.match(stylesheet, /\.lot-markings\.editable\.drawing\s*\{[^}]*touch-action:\s*none/);
   assert.match(script, /classList\.add\("marking-canvas"\)/);
   assert.doesNotMatch(script, /選択した線を削除/);
@@ -261,6 +261,9 @@ test("logs in with hashed credentials and seeds thirteen peer locations", async 
     password: "correct-horse-battery",
   });
   assert.equal(login.status, 200);
+  const sessionExpiry = Date.parse(login.headers["set-cookie"][0].match(/Expires=([^;]+)/)[1]);
+  assert.ok(sessionExpiry >= Date.now() + 29 * 24 * 60 * 60 * 1000);
+  assert.ok(sessionExpiry <= Date.now() + 31 * 24 * 60 * 60 * 1000);
   sessionCookie = login.headers["set-cookie"][0].split(";")[0];
   assert.deepEqual((await agent.get("/api/me")).body, {
     authenticated: true,
@@ -1473,6 +1476,9 @@ test("wires catalog search, token blink and labelled job time inputs", () => {
   assert.doesNotMatch(script, /board-search/);
   assert.match(css, /@keyframes token-blink/);
   assert.match(css, /@media \(max-width: 1100px\)[\s\S]*?\.vehicle-catalog \{[^}]*order: -1;/);
+  assert.match(css, /\.catalog-panel-content\s*\{[^}]*max-height:\s*calc\(100vh - 168px\)[^}]*overflow-y:\s*auto/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
 test("manages dispatch jobs: ordering, completion, isolation, validation and midnight purge", async () => {
