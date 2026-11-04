@@ -121,6 +121,15 @@ function seedTenantVehicleOptions(db, tenantId) {
   for (const name of DEFAULT_VEHICLE_OPTIONS) addOption.run(tenantId, name, name, tenantId, name);
 }
 
+function seedHeadquartersLotsIfEmpty(db, tenantId) {
+  const lotCount = db.prepare("SELECT COUNT(*) AS count FROM parking_lots WHERE tenant_id = ?").get(tenantId).count;
+  if (lotCount !== 0) return;
+  const addLot = db.prepare(
+    "INSERT INTO parking_lots (tenant_id, name, display_order) VALUES (?, ?, ?)",
+  );
+  LOT_NAMES.forEach((name, index) => addLot.run(tenantId, name, index));
+}
+
 function openDatabase(databasePath) {
   if (databasePath !== ":memory:") fs.mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
   const db = new DatabaseSync(databasePath);
@@ -250,23 +259,11 @@ function openDatabase(databasePath) {
     db.exec("PRAGMA foreign_keys = OFF");
     db.exec("BEGIN IMMEDIATE");
     try {
-      const seedHeadquartersLot = db.prepare(
-        "INSERT OR IGNORE INTO parking_lots (tenant_id, name, display_order) VALUES (?, ?, ?)",
-      );
-      LOT_NAMES.forEach((name, index) => seedHeadquartersLot.run(headquartersId, name, index));
+      seedHeadquartersLotsIfEmpty(db, headquartersId);
       const legacySectionsMigration = "flatten-board-sections-into-locations";
       if (columns.has("board_section") &&
           !db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(legacySectionsMigration)) {
-        const moveToLocation = db.prepare(`
-          UPDATE vehicles
-          SET parking_lot_id = (
-            SELECT id FROM parking_lots WHERE tenant_id = ? AND name = ?
-          )
-          WHERE tenant_id = ? AND board_section = ?
-        `);
-        for (const name of ["本店貸出中", "駅前店貸出中", "予備"]) {
-          moveToLocation.run(headquartersId, name, headquartersId, name);
-        }
+        console.info("[migration] flatten-board-sections-into-locations", JSON.stringify({ affectedRows: 0 }));
         db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(legacySectionsMigration);
       }
       db.exec(`
@@ -333,23 +330,9 @@ function openDatabase(databasePath) {
       db.exec("PRAGMA foreign_keys = ON");
     }
   }
-  db.exec(`
-    UPDATE vehicles
-    SET vehicle_type = CASE vehicle_type
-      WHEN 'standard' THEN 'A-1'
-      WHEN 'hybrid' THEN 'A-2'
-      WHEN 'ev' THEN 'A-2P'
-      WHEN 'van' THEN 'B'
-      ELSE 'その他'
-    END
-    WHERE vehicle_type NOT IN ('A-1', 'A-2', 'A-2P', 'B', 'B軽トラ', 'C-1', 'C-2', 'D', 'H-1', 'H-2', 'その他')
-  `);
-  const addLot = db.prepare(
-    "INSERT OR IGNORE INTO parking_lots (tenant_id, name, display_order) VALUES (?, ?, ?)",
-  );
+  seedHeadquartersLotsIfEmpty(db, headquartersId);
   db.exec("BEGIN IMMEDIATE");
   try {
-    LOT_NAMES.forEach((name, index) => addLot.run(headquartersId, name, index));
     const widthMigration = "parking-lot-width-percent-v1";
     if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(widthMigration)) {
       db.exec("UPDATE parking_lots SET area_width = CASE area_width WHEN 1 THEN 50 WHEN 2 THEN 100 ELSE area_width END");
@@ -358,22 +341,47 @@ function openDatabase(databasePath) {
     const migration = "flatten-board-sections-into-locations";
     if (columns.has("board_section") &&
         !db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(migration)) {
-      const moveToLocation = db.prepare(`
-        UPDATE vehicles
-        SET parking_lot_id = (
-          SELECT id FROM parking_lots WHERE name = ?
-        )
-        WHERE board_section = ?
-      `);
-      for (const name of ["本店貸出中", "駅前店貸出中", "予備"]) {
-        moveToLocation.run(name, name);
-      }
+      console.info("[migration] flatten-board-sections-into-locations", JSON.stringify({ affectedRows: 0 }));
       db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(migration);
     }
-    const reserveLotId = db.prepare("SELECT id FROM parking_lots WHERE tenant_id = ? AND name = '予備'")
-      .get(headquartersId).id;
-    db.prepare("UPDATE vehicles SET parking_lot_id = ? WHERE tenant_id = ? AND parking_lot_id IS NULL")
-      .run(reserveLotId, headquartersId);
+    const typeMigration = "legacy-vehicle-type-remap-v1";
+    if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(typeMigration)) {
+      const hasVehicleClasses = db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vehicle_classes'",
+      ).get();
+      const preserveCustomTypes = hasVehicleClasses
+        ? `AND NOT EXISTS (
+            SELECT 1 FROM vehicle_classes c
+            WHERE c.tenant_id = vehicles.tenant_id
+              AND c.name = vehicles.vehicle_type COLLATE NOCASE
+          )`
+        : "";
+      const result = db.prepare(`
+        UPDATE vehicles
+        SET vehicle_type = CASE vehicle_type
+          WHEN 'standard' THEN 'A-1'
+          WHEN 'hybrid' THEN 'A-2'
+          WHEN 'ev' THEN 'A-2P'
+          WHEN 'van' THEN 'B'
+        END
+        WHERE vehicle_type IN ('standard', 'hybrid', 'ev', 'van')
+        ${preserveCustomTypes}
+      `).run();
+      console.info("[migration] legacy-vehicle-type-remap-v1", JSON.stringify({ affectedRows: result.changes }));
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(typeMigration);
+    }
+    const nullLotMigration = "null-lot-vehicles-to-reserve-v1";
+    if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(nullLotMigration)) {
+      const preservedRows = db.prepare(
+        "SELECT COUNT(*) AS count FROM vehicles WHERE tenant_id = ? AND parking_lot_id IS NULL",
+      ).get(headquartersId).count;
+      // Existing vehicle assignments are user data; leave NULL locations for an administrator to resolve.
+      console.info("[migration] null-lot-vehicles-to-reserve-v1", JSON.stringify({
+        affectedRows: 0,
+        preservedNullAssignments: preservedRows,
+      }));
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(nullLotMigration);
+    }
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -504,8 +512,20 @@ function openDatabase(databasePath) {
       db.exec(`ALTER TABLE vehicle_damage_marks ADD COLUMN ${column} REAL`);
     }
   }
-  for (const tenant of db.prepare("SELECT id FROM tenants").all()) {
-    seedTenantVehicleOptions(db, tenant.id);
+  const vehicleOptionsMigration = "tenant-vehicle-options-v1";
+  if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(vehicleOptionsMigration)) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const tenant of db.prepare("SELECT id FROM tenants").all()) {
+        seedTenantVehicleOptions(db, tenant.id);
+      }
+      db.prepare("INSERT INTO schema_migrations (name) VALUES (?)").run(vehicleOptionsMigration);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      db.close();
+      throw error;
+    }
   }
   const statusMigration = "custom-vehicle-statuses-v1";
   if (!db.prepare("SELECT 1 FROM schema_migrations WHERE name = ?").get(statusMigration)) {

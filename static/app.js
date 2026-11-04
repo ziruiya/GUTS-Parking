@@ -51,10 +51,15 @@
   let resizing = null;
   let editingLotId = null;
   let drawingLotId = null;
+  let currentTenantName = "";
+  let collapsedLotIds = new Set();
+  let lastBootstrapFingerprint = null;
+  let boardRefreshTimer = null;
   let markingError = "";
   const markingColors = new Map();
   const markingSaveChains = new Map();
   const markingSaveRevisions = new Map();
+  const lotHighlightTimers = new Map();
   let suppressClick = false;
 
   function reportClientError(type, error, details = {}) {
@@ -123,6 +128,8 @@
   function showLogin() {
     appScreen.hidden = true;
     loginScreen.hidden = false;
+    if (boardRefreshTimer !== null) window.clearTimeout(boardRefreshTimer);
+    boardRefreshTimer = null;
     if (socket) socket.close();
   }
 
@@ -132,6 +139,7 @@
     canManage = userCanManage;
     canManageLocations = true;
     canManageFranchises = userCanManageFranchises;
+    loadCollapsedLots(tenantName);
     document.querySelector("#current-user").textContent = `${tenantName} · ${username}`;
     document.querySelector("#manage-locations-button").hidden = !canManageLocations;
     document.querySelector("#admin-panel-button").hidden = !canManage;
@@ -160,6 +168,17 @@
   async function loadBoard() {
     if (dragged || resizing || draftMarking) return;
     const data = await api("/api/bootstrap");
+    const fingerprint = JSON.stringify(data);
+    if (fingerprint === lastBootstrapFingerprint) return;
+    const catalogInput = document.querySelector("#catalog-search");
+    const preserveSearchFocus = document.activeElement === catalogInput;
+    const searchValue = catalogInput?.value;
+    const selectionStart = preserveSearchFocus ? catalogInput.selectionStart : null;
+    const selectionEnd = preserveSearchFocus ? catalogInput.selectionEnd : null;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const catalogContent = document.querySelector("#catalog-panel .catalog-panel-content");
+    const catalogScrollTop = catalogContent?.scrollTop ?? 0;
     lots = data.parking_lots;
     vehicles = data.vehicles;
     vehicleTypes = data.vehicle_types;
@@ -183,8 +202,20 @@
     }
     populateVehicleTypeChoices();
     render();
+    lastBootstrapFingerprint = fingerprint;
     if (statusDialog.open) renderStatusManager();
     if (classDialog.open) renderClassManager();
+    if (catalogInput && catalogInput.value !== searchValue) catalogInput.value = searchValue;
+    if (preserveSearchFocus) {
+      catalogInput.focus({ preventScroll: true });
+      if (selectionStart !== null && selectionEnd !== null) {
+        catalogInput.setSelectionRange(selectionStart, selectionEnd);
+      }
+    }
+    window.requestAnimationFrame(() => {
+      window.scrollTo(scrollX, scrollY);
+      if (catalogContent) catalogContent.scrollTop = catalogScrollTop;
+    });
   }
 
   function classColor(type) {
@@ -200,6 +231,7 @@
   }
 
   function render() {
+    renderParkingShortcuts();
     parkingGrid.replaceChildren();
     for (const lot of lots) {
       const inLot = vehicles.filter((vehicle) => vehicle.parking_lot_id === lot.id);
@@ -219,10 +251,91 @@
     if (!dialog.open) renderInspectionDiagram();
   }
 
+  function loadCollapsedLots(tenantName) {
+    const nextTenantName = String(tenantName || "");
+    if (nextTenantName === currentTenantName) return;
+    currentTenantName = nextTenantName;
+    lastBootstrapFingerprint = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem(collapsedLotsStorageKey()) || "[]");
+      collapsedLotIds = new Set(Array.isArray(saved) ? saved.map(String) : []);
+    } catch (error) {
+      collapsedLotIds = new Set();
+      console.warn("Could not read parking lot collapse preferences:", error);
+    }
+  }
+
+  function collapsedLotsStorageKey() {
+    return `guts-collapsed-lots:${encodeURIComponent(currentTenantName)}`;
+  }
+
+  function saveCollapsedLots() {
+    try {
+      localStorage.setItem(collapsedLotsStorageKey(), JSON.stringify([...collapsedLotIds]));
+    } catch (error) {
+      console.warn("Could not save parking lot collapse preferences:", error);
+    }
+  }
+
+  function setLotCollapsed(lotId, collapsed) {
+    const id = String(lotId);
+    if (collapsed) {
+      collapsedLotIds.add(id);
+      if (editingLotId === lotId) editingLotId = null;
+      if (drawingLotId === lotId) drawingLotId = null;
+    } else {
+      collapsedLotIds.delete(id);
+    }
+    saveCollapsedLots();
+  }
+
+  function renderParkingShortcuts() {
+    const shortcuts = document.querySelector("#parking-shortcuts");
+    if (!shortcuts) return;
+    shortcuts.replaceChildren(...lots.map((lot) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lot-jump-chip";
+      button.textContent = lot.name;
+      button.addEventListener("click", () => jumpToLot(lot.id));
+      return button;
+    }));
+  }
+
+  function jumpToLot(lotId) {
+    if (collapsedLotIds.has(String(lotId))) {
+      setLotCollapsed(lotId, false);
+      render();
+    }
+    const card = [...parkingGrid.querySelectorAll(".lot-card")]
+      .find((item) => item.dataset.lotId === String(lotId));
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("jump-highlight");
+    window.clearTimeout(lotHighlightTimers.get(lotId));
+    lotHighlightTimers.set(lotId, window.setTimeout(() => {
+      card.classList.remove("jump-highlight");
+      lotHighlightTimers.delete(lotId);
+    }, 1500));
+  }
+
+  function setAllLotsCollapsed(collapsed) {
+    collapsedLotIds = new Set(collapsed ? lots.map((lot) => String(lot.id)) : []);
+    if (collapsed) {
+      editingLotId = null;
+      drawingLotId = null;
+      markingError = "";
+    }
+    saveCollapsedLots();
+    render();
+  }
+
   function makeParkingCard(lot, inLot) {
     const card = document.createElement("article");
     card.className = "lot-card";
     card.dataset.lotId = lot.id;
+    const isCollapsed = collapsedLotIds.has(String(lot.id));
+    card.classList.toggle("is-collapsed", isCollapsed);
     const heading = document.createElement("div");
     heading.className = "lot-heading";
     heading.draggable = canManageLocations;
@@ -281,15 +394,29 @@
       headingTitle.append(navigationIcon);
     }
     heading.append(headingTitle);
+    const controls = document.createElement("div");
+    controls.className = "lot-controls";
+    const collapse = document.createElement("button");
+    collapse.type = "button";
+    collapse.className = "lot-collapse-control";
+    collapse.textContent = isCollapsed ? "+" : "−";
+    collapse.title = isCollapsed ? "駐車場を展開する" : "駐車場を折りたたむ";
+    collapse.setAttribute("aria-label", collapse.title);
+    collapse.setAttribute("aria-expanded", String(!isCollapsed));
+    collapse.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setLotCollapsed(lot.id, !isCollapsed);
+      render();
+    });
+    controls.append(collapse);
     if (canManageLocations) {
-      const controls = document.createElement("div");
-      controls.className = "lot-controls";
       const resize = document.createElement("button");
       resize.type = "button";
       resize.className = "lot-control";
       resize.textContent = "サイズ調整";
       resize.title = "クリック後、右下のハンドルをドラッグしてサイズを調整";
       resize.addEventListener("click", () => {
+        setLotCollapsed(lot.id, false);
         const nextEditingLotId = editingLotId === lot.id ? null : lot.id;
         if (nextEditingLotId !== editingLotId) drawingLotId = null;
         editingLotId = nextEditingLotId;
@@ -300,8 +427,8 @@
       const later = makeLotControl("→", "右へ移動", () => moveLot(lot.id, 1));
       resize.textContent = editingLotId === lot.id ? "完了" : "サイズ調整";
       controls.append(resize, earlier, later);
-      heading.append(controls);
     }
+    heading.append(controls);
     if (canManageLocations && editingLotId === lot.id) card.classList.add("size-editing");
     const area = document.createElement("div");
     area.className = "lot-area";
@@ -366,6 +493,7 @@
       draw.className = "lot-control";
       draw.textContent = drawingLotId === lot.id ? "描画終了" : "直線を引く";
       draw.addEventListener("click", () => {
+        setLotCollapsed(lot.id, false);
         if (drawingLotId === lot.id) cancelDraftMarking(lot.id);
         drawingLotId = drawingLotId === lot.id ? null : lot.id;
         render();
@@ -771,9 +899,15 @@
       ? document.elementFromPoint(event.clientX, event.clientY)
       : null;
     const dropArea = dropTarget?.closest(".lot-area");
+    const collapsedHeading = dropTarget?.closest(".lot-card.is-collapsed .lot-heading");
     dragged = null;
     current.ghost.remove();
     document.querySelectorAll(".lot-area.drop-target").forEach((area) => area.classList.remove("drop-target"));
+    if (collapsedHeading) {
+      setLotCollapsed(collapsedHeading.closest(".lot-card").dataset.lotId, false);
+      render();
+      return;
+    }
     if (!current.moved) return;
     suppressClick = true;
     if (!dropArea) {
@@ -2495,7 +2629,7 @@
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${scheme}//${location.host}/ws`);
     socket.addEventListener("open", () => setConnection(true));
-    socket.addEventListener("message", () => loadBoard().catch(showError));
+    socket.addEventListener("message", scheduleBoardRefresh);
     socket.addEventListener("close", (event) => {
       setConnection(false);
       if ([4003, 4004, 4005, 4006].includes(event.code)) {
@@ -2512,11 +2646,22 @@
     socket.addEventListener("error", () => socket.close());
   }
 
+  function scheduleBoardRefresh() {
+    if (boardRefreshTimer !== null) window.clearTimeout(boardRefreshTimer);
+    boardRefreshTimer = window.setTimeout(() => {
+      boardRefreshTimer = null;
+      loadBoard().catch(showError);
+    }, 250);
+  }
+
   function setConnection(connected) {
     const state = document.querySelector("#connection-state");
     state.classList.toggle("offline", !connected);
     state.lastChild.textContent = connected ? "接続中" : "再接続中";
   }
+
+  document.querySelector("#collapse-all-lots")?.addEventListener("click", () => setAllLotsCollapsed(true));
+  document.querySelector("#expand-all-lots")?.addEventListener("click", () => setAllLotsCollapsed(false));
 
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();

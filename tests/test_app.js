@@ -1384,8 +1384,7 @@ test("flattens previous board sections into peer locations without losing vehicl
     const vehicle = migrated.prepare("SELECT * FROM vehicles WHERE plate = ?").get("旧データ");
     assert.equal(vehicle.vehicle_type, "A-2");
     assert.equal(Object.hasOwn(vehicle, "board_section"), false);
-    assert.equal(vehicle.parking_lot_id,
-      migrated.prepare("SELECT id FROM parking_lots WHERE name = '駅前店貸出中'").get().id);
+    assert.equal(vehicle.parking_lot_id, 4);
     assert.deepEqual(
       [vehicle.position_x, vehicle.position_y, vehicle.unwashed, vehicle.needs_repair],
       [0.37, 0.62, 1, 1],
@@ -1397,7 +1396,7 @@ test("flattens previous board sections into peer locations without losing vehicl
         .all(vehicle.id).map((status) => status.key),
       ["needs_repair", "unwashed"],
     );
-    assert.equal(migrated.prepare("SELECT COUNT(*) AS count FROM parking_lots").get().count, 13);
+    assert.equal(migrated.prepare("SELECT COUNT(*) AS count FROM parking_lots").get().count, 9);
     const lot = migrated.prepare("SELECT * FROM parking_lots WHERE id = 4").get();
     assert.deepEqual([lot.display_order, lot.area_height, lot.area_width], [3, 210, 50]);
     assert.equal(lot.navigation_url, "");
@@ -1414,7 +1413,7 @@ test("flattens previous board sections into peer locations without losing vehicl
 
     const reopened = openDatabase(databasePath);
     assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM tenants").get().count, 1);
-    assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM parking_lots").get().count, 13);
+    assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM parking_lots").get().count, 9);
     assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM vehicles WHERE plate = '旧データ'").get().count, 1);
     assert.deepEqual(reopened.prepare("PRAGMA foreign_key_check").all(), []);
     reopened.close();
@@ -1423,6 +1422,125 @@ test("flattens previous board sections into peer locations without losing vehicl
     const result = spawnSync(process.execPath, ["-e", migrationScript], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr || result.error?.message);
   } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("seeds headquarters parking locations only when the tenant has none", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "guts-empty-startup-"));
+  const databasePath = path.join(directory, "empty.sqlite");
+  try {
+    let db = openDatabase(databasePath);
+    const firstStart = db.prepare(
+      "SELECT id, name, display_order FROM parking_lots WHERE tenant_id = 1 ORDER BY display_order, id",
+    ).all().map((lot) => ({ ...lot }));
+    assert.equal(firstStart.length, 13);
+    db.close();
+
+    db = openDatabase(databasePath);
+    const secondStart = db.prepare(
+      "SELECT id, name, display_order FROM parking_lots WHERE tenant_id = 1 ORDER BY display_order, id",
+    ).all().map((lot) => ({ ...lot }));
+    assert.deepEqual(secondStart, firstStart);
+    db.close();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("reopening an established tenant database preserves parking lots and every vehicle field", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "guts-established-startup-"));
+  const databasePath = path.join(directory, "established.sqlite");
+  const originalInfo = console.info;
+  let db;
+  try {
+    db = openDatabase(databasePath);
+    db.prepare("UPDATE parking_lots SET name = 'ヤード 1' WHERE tenant_id = 1 AND name = '駐車場 1'").run();
+    db.prepare("DELETE FROM parking_lots WHERE tenant_id = 1 AND name = '駐車場 2'").run();
+    db.prepare(`
+      INSERT INTO parking_lots (tenant_id, name, display_order, area_height, area_width)
+      VALUES (1, '臨時', 40, 390, 65)
+    `).run();
+    db.prepare("UPDATE vehicle_option_types SET name = '独自装備名' WHERE tenant_id = 1 AND name = 'ETC'").run();
+    db.prepare(`
+      INSERT INTO vehicles
+        (plate, vehicle_type, vehicle_model, parking_lot_id, position_x, position_y,
+         unwashed, no_fuel, needs_repair, options, notes, inspection_expiry_date,
+         statutory_inspection_date, tenant_id)
+      VALUES ('独自型式', '自社独自', '専用モデル', 1, 0.23, 0.77,
+              1, 0, 1, '["独自装備名"]', '変更禁止の備考', '2027-03-01',
+              '2027-04-01', 1)
+    `).run();
+    db.prepare(`
+      INSERT INTO vehicles
+        (plate, vehicle_type, vehicle_model, parking_lot_id, position_x, position_y, tenant_id)
+      VALUES ('未割当車', 'A-1', 'アルト', NULL, 0.41, 0.59, 1)
+    `).run();
+    db.prepare(`
+      INSERT INTO vehicle_classes (tenant_id, name, color, display_order)
+      VALUES (1, 'van', '#336699', 20)
+    `).run();
+    db.prepare(`
+      INSERT INTO vehicles
+        (plate, vehicle_type, vehicle_model, parking_lot_id, position_x, position_y, tenant_id)
+      VALUES ('同名独自クラス', 'van', '独自バン', 1, 0.12, 0.88, 1)
+    `).run();
+    db.prepare(`
+      DELETE FROM schema_migrations
+      WHERE name IN (
+        'legacy-vehicle-type-remap-v1',
+        'null-lot-vehicles-to-reserve-v1',
+        'tenant-vehicle-options-v1'
+      )
+    `).run();
+    const originalLots = db.prepare(
+      "SELECT id, name, display_order FROM parking_lots WHERE tenant_id = 1 ORDER BY id",
+    ).all().map((lot) => ({ ...lot }));
+    const originalVehicles = db.prepare("SELECT * FROM vehicles WHERE tenant_id = 1 ORDER BY id")
+      .all().map((vehicle) => ({ ...vehicle }));
+    const originalOptions = db.prepare(
+      "SELECT id, name, built_in_key FROM vehicle_option_types WHERE tenant_id = 1 ORDER BY id",
+    ).all().map((option) => ({ ...option }));
+    db.close();
+    db = null;
+
+    const migrationLogs = [];
+    console.info = (...values) => migrationLogs.push(values.join(" "));
+    for (let restart = 0; restart < 2; restart += 1) {
+      db = openDatabase(databasePath);
+      assert.deepEqual(
+        db.prepare("SELECT id, name, display_order FROM parking_lots WHERE tenant_id = 1 ORDER BY id")
+          .all().map((lot) => ({ ...lot })),
+        originalLots,
+      );
+      assert.deepEqual(
+        db.prepare("SELECT * FROM vehicles WHERE tenant_id = 1 ORDER BY id")
+          .all().map((vehicle) => ({ ...vehicle })),
+        originalVehicles,
+      );
+      assert.deepEqual(
+        db.prepare("SELECT id, name, built_in_key FROM vehicle_option_types WHERE tenant_id = 1 ORDER BY id")
+          .all().map((option) => ({ ...option })),
+        originalOptions,
+      );
+      assert.ok(db.prepare(
+        "SELECT 1 FROM schema_migrations WHERE name = 'legacy-vehicle-type-remap-v1'",
+      ).get());
+      assert.ok(db.prepare(
+        "SELECT 1 FROM schema_migrations WHERE name = 'null-lot-vehicles-to-reserve-v1'",
+      ).get());
+      db.close();
+      db = null;
+    }
+    assert.ok(migrationLogs.some((line) =>
+      line.includes("legacy-vehicle-type-remap-v1") && line.includes('"affectedRows":0')));
+    assert.ok(migrationLogs.some((line) =>
+      line.includes("null-lot-vehicles-to-reserve-v1") &&
+      line.includes('"affectedRows":0') &&
+      line.includes('"preservedNullAssignments":1')));
+  } finally {
+    console.info = originalInfo;
+    db?.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -1451,6 +1569,11 @@ test("translates the interface to Chinese and English without altering Japanese"
   assert.equal(translate("3 台", "en"), "3 vehicles");
   assert.equal(translate("  ジョブはありません。 ", "zh"), "  没有任务。 ");
   assert.equal(translate("駐車場 1 · H-2", "en"), "Lot 1 · H-2");
+  assert.equal(translate("すべて折りたたむ", "zh"), "全部折叠");
+  assert.equal(translate("すべて展開", "en"), "Expand all");
+  assert.equal(translate("駐車場を折りたたむ", "en"), "Collapse parking lot");
+  assert.equal(translate("駐車場を展開する", "zh"), "展开停车场");
+  assert.equal(translate("駐車場へ移動", "en"), "Jump to parking lot");
   assert.equal(translate("ユーザー固有の名前", "en"), "ユーザー固有の名前");
   assert.match(translate("通信エラー 線はサーバーに保存されていません。", "en"), /not saved/);
 });
@@ -1479,6 +1602,41 @@ test("wires catalog search, token blink and labelled job time inputs", () => {
   assert.match(css, /\.catalog-panel-content\s*\{[^}]*max-height:\s*calc\(100vh - 168px\)[^}]*overflow-y:\s*auto/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar-actions\s*\{[^}]*flex-wrap:\s*wrap/);
+});
+
+test("wires persistent parking lot collapse, quick jumps, debounced refresh and touch-safe form sizes", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../static/index.html"), "utf8");
+  const script = fs.readFileSync(path.join(__dirname, "../static/app.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../static/style.css"), "utf8");
+  assert.match(html, /id="parking-shortcuts"/);
+  assert.match(html, /id="collapse-all-lots"/);
+  assert.match(html, /id="expand-all-lots"/);
+  assert.match(script, /guts-collapsed-lots:/);
+  assert.match(script, /collapsedLotIds\.has\(String\(lot\.id\)\)/);
+  assert.match(script, /function jumpToLot\(lotId\)/);
+  assert.match(script, /scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/);
+  assert.match(script, /collapsedHeading/);
+  assert.match(script, /scheduleBoardRefresh/);
+  assert.match(script, /}, 250\)/);
+  assert.match(script, /fingerprint === lastBootstrapFingerprint/);
+  assert.match(script, /if \(dragged \|\| resizing \|\| draftMarking\) return/);
+  assert.match(css, /\.lot-card\.is-collapsed \.lot-area,\s*\.lot-card\.is-collapsed \.lot-drawing-tools/);
+  assert.match(css, /\.catalog-search[^}]*font-size:\s*16px/);
+  assert.match(css, /\.language-select[^}]*font-size:\s*16px/);
+  assert.match(css, /\.priority-editor select[^}]*font-size:\s*16px/);
+  assert.match(css, /\.assessment-notes-field textarea[^}]*font-size:\s*16px/);
+  assert.match(css, /\.add-task-form input,\s*\.add-task-form textarea[^}]*font-size:\s*16px/);
+  assert.match(css, /input,\s*select,\s*textarea\s*\{\s*font-size:\s*16px;\s*\}/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.lot-control,\s*\.lot-collapse-control \{ min-width: 40px; min-height: 40px; \}/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.lot-control \{ font-size: 12px; \}/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.type-filter \{ min-height: 40px; padding: 8px 10px; font-size: 12px; \}/);
+  assert.doesNotMatch(html, /maximum-scale|user-scalable\s*=/i);
+  for (const [, selector, declarations] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(^|[\s,])(?:input|select|textarea)(?=$|[\s.#:[,>])/i.test(selector)) continue;
+    const fontSize = declarations.match(/(?:^|;)\s*font-size\s*:\s*([\d.]+)px/i);
+    if (fontSize) assert.ok(Number(fontSize[1]) >= 16, `${selector} declares ${fontSize[1]}px`);
+  }
+  assert.doesNotThrow(() => new vm.Script(script));
 });
 
 test("manages dispatch jobs: ordering, completion, isolation, validation and midnight purge", async () => {
