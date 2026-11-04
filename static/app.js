@@ -9,8 +9,6 @@
   const formError = document.querySelector("#form-error");
   const locationDialog = document.querySelector("#location-dialog");
   const locationError = document.querySelector("#location-error");
-  const franchiseDialog = document.querySelector("#franchise-dialog");
-  const franchiseError = document.querySelector("#franchise-error");
   const employeeDialog = document.querySelector("#employee-dialog");
   const employeeError = document.querySelector("#employee-error");
   const statusDialog = document.querySelector("#status-dialog");
@@ -43,7 +41,6 @@
   let tasks = [];
   let canManage = false;
   let canManageLocations = false;
-  let canManageFranchises = false;
   let activeVehicleType = "all";
   let activeStatus = "all";
   let socket;
@@ -59,7 +56,6 @@
   const markingColors = new Map();
   const markingSaveChains = new Map();
   const markingSaveRevisions = new Map();
-  const lotHighlightTimers = new Map();
   let suppressClick = false;
 
   function reportClientError(type, error, details = {}) {
@@ -133,18 +129,16 @@
     if (socket) socket.close();
   }
 
-  function showBoard(username, userCanManage, userCanManageFranchises, tenantName) {
+  function showBoard(username, userCanManage, tenantName) {
     loginScreen.hidden = true;
     appScreen.hidden = false;
     canManage = userCanManage;
     canManageLocations = true;
-    canManageFranchises = userCanManageFranchises;
     loadCollapsedLots(tenantName);
     document.querySelector("#current-user").textContent = `${tenantName} · ${username}`;
     document.querySelector("#manage-locations-button").hidden = !canManageLocations;
     document.querySelector("#admin-panel-button").hidden = !canManage;
     document.querySelector("#add-vehicle-button").hidden = false;
-    document.querySelector("#manage-franchises-button").hidden = !canManageFranchises;
     connectSocket();
     loadBoard().catch(showError);
   }
@@ -231,7 +225,6 @@
   }
 
   function render() {
-    renderParkingShortcuts();
     parkingGrid.replaceChildren();
     for (const lot of lots) {
       const inLot = vehicles.filter((vehicle) => vehicle.parking_lot_id === lot.id);
@@ -289,47 +282,6 @@
     saveCollapsedLots();
   }
 
-  function renderParkingShortcuts() {
-    const shortcuts = document.querySelector("#parking-shortcuts");
-    if (!shortcuts) return;
-    shortcuts.replaceChildren(...lots.map((lot) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "lot-jump-chip";
-      button.textContent = lot.name;
-      button.addEventListener("click", () => jumpToLot(lot.id));
-      return button;
-    }));
-  }
-
-  function jumpToLot(lotId) {
-    if (collapsedLotIds.has(String(lotId))) {
-      setLotCollapsed(lotId, false);
-      render();
-    }
-    const card = [...parkingGrid.querySelectorAll(".lot-card")]
-      .find((item) => item.dataset.lotId === String(lotId));
-    if (!card) return;
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    card.classList.add("jump-highlight");
-    window.clearTimeout(lotHighlightTimers.get(lotId));
-    lotHighlightTimers.set(lotId, window.setTimeout(() => {
-      card.classList.remove("jump-highlight");
-      lotHighlightTimers.delete(lotId);
-    }, 1500));
-  }
-
-  function setAllLotsCollapsed(collapsed) {
-    collapsedLotIds = new Set(collapsed ? lots.map((lot) => String(lot.id)) : []);
-    if (collapsed) {
-      editingLotId = null;
-      drawingLotId = null;
-      markingError = "";
-    }
-    saveCollapsedLots();
-    render();
-  }
-
   function makeParkingCard(lot, inLot) {
     const card = document.createElement("article");
     card.className = "lot-card";
@@ -366,17 +318,13 @@
       const sourceId = Number(event.dataTransfer.getData("text/plain"));
       if (sourceId && sourceId !== lot.id) reorderLots(sourceId, lot.id).catch(showError);
     });
-    const headingTitle = lot.navigation_url
-      ? document.createElement("a")
-      : document.createElement("div");
-    headingTitle.className = "lot-heading-title";
-    if (lot.navigation_url) {
-      headingTitle.href = lot.navigation_url;
-      headingTitle.target = "_blank";
-      headingTitle.rel = "noopener noreferrer";
-      headingTitle.setAttribute("aria-label", `${lot.name}のGoogleマップナビを開く`);
-      headingTitle.title = "Googleマップでナビを開く";
-    }
+    const headingTitle = document.createElement("div");
+    headingTitle.className = "lot-heading-title lot-toggle";
+    headingTitle.title = isCollapsed ? "クリックで展開する" : "クリックで折りたたむ";
+    headingTitle.addEventListener("click", () => {
+      setLotCollapsed(lot.id, !isCollapsed);
+      render();
+    });
     const title = document.createElement("h3");
     title.textContent = lot.name;
     const count = document.createElement("span");
@@ -387,10 +335,15 @@
     if (lot.class_priority?.length) card.title = `優先クラス: ${lot.class_priority.join(" > ")}`;
     headingTitle.append(title, count);
     if (lot.navigation_url) {
-      const navigationIcon = document.createElement("span");
+      const navigationIcon = document.createElement("a");
       navigationIcon.className = "lot-navigation-icon";
+      navigationIcon.href = lot.navigation_url;
+      navigationIcon.target = "_blank";
+      navigationIcon.rel = "noopener noreferrer";
       navigationIcon.textContent = "↗";
-      navigationIcon.setAttribute("aria-hidden", "true");
+      navigationIcon.title = "Googleマップでナビを開く";
+      navigationIcon.setAttribute("aria-label", `${lot.name}のGoogleマップナビを開く`);
+      navigationIcon.addEventListener("click", (event) => event.stopPropagation());
       headingTitle.append(navigationIcon);
     }
     heading.append(headingTitle);
@@ -2068,114 +2021,6 @@
     locationDialog.showModal();
   }
 
-  async function loadFranchises() {
-    const result = await api("/api/franchises");
-    const list = document.querySelector("#franchise-list");
-    list.replaceChildren();
-    if (!result.franchises.length) {
-      const empty = document.createElement("p");
-      empty.className = "status-empty";
-      empty.textContent = "加盟店はまだ登録されていません。";
-      list.append(empty);
-      return;
-    }
-    for (const franchise of result.franchises) {
-      const row = document.createElement("div");
-      row.className = "franchise-row";
-      const details = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = franchise.name;
-      const account = document.createElement("span");
-      account.textContent = `管理者：${franchise.admin_usernames || "未登録"}`;
-      const state = document.createElement("span");
-      state.className = franchise.is_active ? "franchise-active" : "franchise-suspended";
-      state.textContent = franchise.is_active ? "利用中" : "利用停止中";
-      details.append(name, account, state);
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = franchise.is_active ? "danger-button" : "primary-button";
-      toggle.textContent = franchise.is_active ? "利用停止" : "利用再開";
-      toggle.addEventListener("click", async () => {
-        franchiseError.textContent = "";
-        toggle.disabled = true;
-        try {
-          await api(`/api/franchises/${franchise.id}/status`, {
-            method: "PATCH",
-            body: JSON.stringify({ is_active: !franchise.is_active }),
-          });
-          await loadFranchises();
-        } catch (error) {
-          franchiseError.textContent = error.message;
-        } finally {
-          toggle.disabled = false;
-        }
-      });
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "danger-button franchise-delete-button";
-      remove.textContent = "加盟店を削除";
-      remove.addEventListener("click", () => {
-        row.querySelector(".franchise-delete-confirm")?.remove();
-        const confirmation = document.createElement("div");
-        confirmation.className = "franchise-delete-confirm";
-        const warning = document.createElement("span");
-        warning.textContent = `全アカウント・車両・位置を削除します。続行するには「${franchise.name}」を入力してください。`;
-        const input = document.createElement("input");
-        input.type = "text";
-        input.autocomplete = "off";
-        input.placeholder = franchise.name;
-        input.setAttribute("aria-label", "削除する加盟店名");
-        const actions = document.createElement("div");
-        actions.className = "franchise-delete-actions";
-        const confirm = document.createElement("button");
-        confirm.type = "button";
-        confirm.className = "danger-button";
-        confirm.textContent = "完全に削除";
-        confirm.addEventListener("click", async () => {
-          franchiseError.textContent = "";
-          if (input.value.trim() !== franchise.name) {
-            franchiseError.textContent = "加盟店名が一致しません。";
-            return;
-          }
-          confirm.disabled = true;
-          try {
-            await api(`/api/franchises/${franchise.id}`, {
-              method: "DELETE",
-              body: JSON.stringify({ confirmation_name: input.value }),
-            });
-            await loadFranchises();
-          } catch (error) {
-            franchiseError.textContent = error.message;
-            confirm.disabled = false;
-          }
-        });
-        const cancel = document.createElement("button");
-        cancel.type = "button";
-        cancel.className = "quiet-button";
-        cancel.textContent = "キャンセル";
-        cancel.addEventListener("click", () => confirmation.remove());
-        actions.append(confirm, cancel);
-        confirmation.append(warning, input, actions);
-        row.append(confirmation);
-        input.focus();
-      });
-      const buttons = document.createElement("div");
-      buttons.className = "franchise-row-actions";
-      buttons.append(toggle, remove);
-      row.append(details, buttons);
-      list.append(row);
-    }
-  }
-
-  function openFranchiseManager() {
-    if (!canManageFranchises) return;
-    franchiseError.textContent = "";
-    loadFranchises().catch((error) => {
-      franchiseError.textContent = error.message;
-    });
-    franchiseDialog.showModal();
-  }
-
   async function loadEmployees() {
     const { employees } = await api("/api/employees");
     const list = document.querySelector("#employee-list");
@@ -2660,8 +2505,6 @@
     state.lastChild.textContent = connected ? "接続中" : "再接続中";
   }
 
-  document.querySelector("#collapse-all-lots")?.addEventListener("click", () => setAllLotsCollapsed(true));
-  document.querySelector("#expand-all-lots")?.addEventListener("click", () => setAllLotsCollapsed(false));
 
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -2676,7 +2519,6 @@
       showBoard(
         result.username,
         result.can_manage,
-        result.can_manage_franchises,
         result.tenant_name,
       );
     } catch (error) {
@@ -2740,7 +2582,6 @@
   document.querySelector("#save-lot-distances").addEventListener("click", () =>
     saveDistances("/api/lot-distances", [...document.querySelectorAll("#lot-distance-table input")],
       (input, minutes) => ({ from_lot_id: Number(input.dataset.fromLotId), to_lot_id: Number(input.dataset.toLotId), minutes })));
-  document.querySelector("#manage-franchises-button").addEventListener("click", openFranchiseManager);
   document.querySelector("#manage-employees-button").addEventListener("click", openEmployeeManager);
   document.querySelector("#export-vehicles-button").addEventListener("click", downloadMariaDbExport);
   document.querySelector("#close-employee-dialog").addEventListener("click", () => employeeDialog.close());
@@ -2755,7 +2596,6 @@
   document.querySelector("#manage-assessment-button").addEventListener("click", openAssessmentManager);
   document.querySelector("#manage-damage-types-button").addEventListener("click", openAssessmentManager);
   document.querySelector("#close-location-dialog").addEventListener("click", () => locationDialog.close());
-  document.querySelector("#close-franchise-dialog").addEventListener("click", () => franchiseDialog.close());
   document.querySelector("#close-status-dialog").addEventListener("click", () => statusDialog.close());
   document.querySelector("#close-option-dialog").addEventListener("click", () =>
     document.querySelector("#option-dialog").close());
@@ -2875,27 +2715,6 @@
       assessmentManagerError.textContent = error.message;
     }
   });
-  document.querySelector("#add-franchise-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    franchiseError.textContent = "";
-    const form = event.currentTarget;
-    if (!form.reportValidity()) return;
-    const data = new FormData(form);
-    try {
-      await api("/api/franchises", {
-        method: "POST",
-        body: JSON.stringify({
-          name: data.get("name"),
-          username: data.get("username"),
-          password: data.get("password"),
-        }),
-      });
-      form.reset();
-      await loadFranchises();
-    } catch (error) {
-      franchiseError.textContent = error.message;
-    }
-  });
   document.querySelector("#add-location-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     locationError.textContent = "";
@@ -2997,7 +2816,7 @@
   api("/api/me").then((result) => {
     setAppVersion(result.version);
     if (result.authenticated) {
-      showBoard(result.username, result.can_manage, result.can_manage_franchises, result.tenant_name);
+      showBoard(result.username, result.can_manage, result.tenant_name);
     } else {
       showLogin();
       if (result.suspended) {

@@ -13,13 +13,7 @@ const { version } = require("../package.json");
 const {
   ASSESSMENT_FIELD_TYPES,
   DEFAULT_STATUSES,
-  LOT_NAMES,
   openDatabase,
-  seedTenantAssessment,
-  seedTenantStatuses,
-  seedTenantVehicleClasses,
-  seedTenantVehicleModels,
-  seedTenantVehicleOptions,
 } = require("./db");
 const { SQLiteSessionStore } = require("./session-store");
 const { hashPassword, verifyPassword } = require("./security");
@@ -124,11 +118,11 @@ class RealtimeBoard {
     const row = this.db.prepare("SELECT sess FROM sessions WHERE sid = ?").get(sessionId);
     const username = row ? JSON.parse(row.sess).username : null;
     const user = username && this.db.prepare(`
-      SELECT u.tenant_id, t.is_active
+      SELECT u.tenant_id, t.is_active, t.is_headquarters
       FROM users u JOIN tenants t ON t.id = u.tenant_id
       WHERE u.username = ?
     `).get(username);
-    if (!user || !user.is_active) {
+    if (!user || !user.is_active || !user.is_headquarters) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
@@ -569,6 +563,9 @@ function createApplication(options = {}) {
     if (!user.is_active) {
       return response.status(403).json({ detail: "この加盟店アカウントは一時停止中です。総本店へお問い合わせください。" });
     }
+    if (!user.is_headquarters) {
+      return response.status(403).json({ detail: "このアカウントは現在利用できません。" });
+    }
     request.user = user;
     request.tenantId = user.tenant_id;
     next();
@@ -584,13 +581,6 @@ function createApplication(options = {}) {
   function requireAdmin(request, response, next) {
     if (request.user.role !== "admin") {
       return response.status(403).json({ detail: "Administrator permission is required." });
-    }
-    next();
-  }
-
-  function requireHeadquartersAdmin(request, response, next) {
-    if (request.user.role !== "admin" || !request.user.is_headquarters) {
-      return response.status(403).json({ detail: "Headquarters administrator permission is required." });
     }
     next();
   }
@@ -662,7 +652,6 @@ function createApplication(options = {}) {
       version,
       username: request.session.username,
       can_manage: user.role === "admin",
-      can_manage_franchises: user.role === "admin" && Boolean(user.is_headquarters),
       tenant_name: user.tenant_name,
     });
   });
@@ -698,6 +687,9 @@ function createApplication(options = {}) {
         if (!row.is_active) {
           return response.status(403).json({ detail: "この加盟店アカウントは一時停止中です。総本店へお問い合わせください。" });
         }
+        if (!row.is_headquarters) {
+          return response.status(403).json({ detail: "このアカウントは現在利用できません。" });
+        }
         request.session.regenerate((error) => {
           if (error) return next(error);
           request.session.username = username.trim();
@@ -707,7 +699,6 @@ function createApplication(options = {}) {
             response.json({
               username: request.session.username,
               can_manage: row.role === "admin",
-              can_manage_franchises: row.role === "admin" && Boolean(row.is_headquarters),
               tenant_name: row.tenant_name,
             });
           });
@@ -1300,150 +1291,6 @@ function createApplication(options = {}) {
       }
       realtime.notify(request.tenantId);
       response.json({ updated: entries.length });
-    } catch (error) {
-      next(error);
-    }
-  });
-
-  app.get("/api/franchises", requireUser, requireHeadquartersAdmin, (_request, response) => {
-    const stores = db.prepare(`
-      SELECT t.id, t.name, t.is_active, t.created_at,
-             group_concat(u.username, '、') AS admin_usernames
-      FROM tenants t
-      LEFT JOIN users u ON u.tenant_id = t.id AND u.role = 'admin'
-      WHERE t.is_headquarters = 0
-      GROUP BY t.id
-      ORDER BY t.created_at, t.id
-    `).all().map((store) => ({
-      ...store,
-      is_active: Boolean(store.is_active),
-      admin_usernames: store.admin_usernames || "",
-    }));
-    response.json({ franchises: stores });
-  });
-
-  app.post("/api/franchises", requireUser, requireHeadquartersAdmin, requireSameOrigin, async (request, response, next) => {
-    const name = typeof request.body?.name === "string" ? request.body.name.trim() : "";
-    const username = typeof request.body?.username === "string" ? request.body.username.trim() : "";
-    const password = request.body?.password;
-    if (!name || name.length > 80 || !username || username.length > 80 ||
-        typeof password !== "string" || password.length < 12 || password.length > 1024) {
-      return response.status(422).json({
-        detail: "店舗名・アカウント名は1〜80文字、パスワードは12〜1024文字で入力してください。",
-      });
-    }
-    if (db.prepare("SELECT 1 FROM tenants WHERE name = ? COLLATE NOCASE").get(name) ||
-        db.prepare("SELECT 1 FROM users WHERE username = ? COLLATE NOCASE").get(username)) {
-      return response.status(409).json({ detail: "店舗名またはアカウント名は既に使用されています。" });
-    }
-    try {
-      const passwordHash = await hashPassword(password);
-      db.exec("BEGIN IMMEDIATE");
-      let tenantId;
-      try {
-        const tenantResult = db.prepare(
-          "INSERT INTO tenants (name, is_headquarters, is_active) VALUES (?, 0, 1)",
-        ).run(name);
-        tenantId = Number(tenantResult.lastInsertRowid);
-        seedTenantStatuses(db, tenantId);
-        seedTenantAssessment(db, tenantId);
-        seedTenantVehicleOptions(db, tenantId);
-        seedTenantVehicleClasses(db, tenantId);
-        seedTenantVehicleModels(db, tenantId);
-        db.prepare(`
-          INSERT INTO users (username, password_hash, role, tenant_id)
-          VALUES (?, ?, 'admin', ?)
-        `).run(username, passwordHash, tenantId);
-        const addLot = db.prepare(`
-          INSERT INTO parking_lots (tenant_id, name, display_order, area_height, area_width)
-          VALUES (?, ?, ?, 210, 50)
-        `);
-        LOT_NAMES.forEach((lotName, index) => addLot.run(tenantId, lotName, index));
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-      realtime.notify(request.tenantId);
-      response.status(201).json({
-        franchise: { id: tenantId, name, is_active: true, admin_usernames: username },
-      });
-    } catch (error) {
-      if (isUniqueConstraint(error)) {
-        return response.status(409).json({ detail: "店舗名またはアカウント名は既に使用されています。" });
-      }
-      next(error);
-    }
-  });
-
-  app.patch(
-    "/api/franchises/:id/status",
-    requireUser,
-    requireHeadquartersAdmin,
-    requireSameOrigin,
-    (request, response, next) => {
-      const tenantId = parseVehicleId(request.params.id);
-      if (tenantId === null || typeof request.body?.is_active !== "boolean") {
-        return response.status(422).json({ detail: "有効・停止の状態を指定してください。" });
-      }
-      const store = db.prepare(`
-        SELECT id, name, is_active FROM tenants
-        WHERE id = ? AND is_headquarters = 0
-      `).get(tenantId);
-      if (!store) return response.status(404).json({ detail: "加盟店が見つかりません。" });
-      try {
-        db.prepare("UPDATE tenants SET is_active = ? WHERE id = ?")
-          .run(Number(request.body.is_active), tenantId);
-        if (request.body.is_active) realtime.notify(tenantId);
-        else realtime.closeTenant(tenantId);
-        realtime.notify(request.tenantId);
-        response.json({ ...store, is_active: request.body.is_active });
-      } catch (error) {
-        next(error);
-      }
-    },
-  );
-
-  app.delete("/api/franchises/:id", requireUser, requireHeadquartersAdmin, requireSameOrigin, (request, response, next) => {
-    const tenantId = parseVehicleId(request.params.id);
-    const confirmationName = typeof request.body?.confirmation_name === "string"
-      ? request.body.confirmation_name.trim()
-      : "";
-    const store = tenantId === null ? null : db.prepare(
-      "SELECT id, name FROM tenants WHERE id = ? AND is_headquarters = 0",
-    ).get(tenantId);
-    if (!store) return response.status(404).json({ detail: "加盟店が見つかりません。" });
-    if (confirmationName !== store.name) {
-      return response.status(422).json({ detail: "削除するには加盟店名を正確に入力してください。" });
-    }
-    try {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const usernames = new Set(db.prepare("SELECT username FROM users WHERE tenant_id = ?").all(tenantId)
-          .map((user) => user.username));
-        const sessions = db.prepare("SELECT sid, sess FROM sessions").all();
-        const deleteSession = db.prepare("DELETE FROM sessions WHERE sid = ?");
-        for (const session of sessions) {
-          let username;
-          try {
-            username = JSON.parse(session.sess).username;
-          } catch {
-            continue;
-          }
-          if (usernames.has(username)) deleteSession.run(session.sid);
-        }
-        db.prepare("DELETE FROM vehicles WHERE tenant_id = ?").run(tenantId);
-        db.prepare("DELETE FROM parking_lots WHERE tenant_id = ?").run(tenantId);
-        db.prepare("DELETE FROM users WHERE tenant_id = ?").run(tenantId);
-        db.prepare("DELETE FROM tenants WHERE id = ?").run(tenantId);
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
-      realtime.closeTenant(tenantId, 4004, "Store deleted");
-      realtime.notify(request.tenantId);
-      response.status(204).end();
     } catch (error) {
       next(error);
     }

@@ -13,7 +13,6 @@
 </head>
 <body>
   <main id="login-screen" class="login-screen" hidden>
-    <div class="login-language"><select class="language-select" aria-label="Language"><option value="ja">日本語</option><option value="zh">中文</option><option value="en">English</option></select></div>
     <form id="login-form" class="login-card">
       <div class="brand-mark">G</div>
       
@@ -32,7 +31,6 @@
         <span><b>Guts 車両配置ボード</b><small data-app-version></small></span>
       </a>
       <div class="topbar-actions">
-        <select class="language-select" aria-label="Language"><option value="ja">日本語</option><option value="zh">中文</option><option value="en">English</option></select>
         <span id="connection-state" class="connection"><i></i>接続中</span>
         <span id="current-user" class="current-user"></span>
         <button id="admin-panel-button" class="quiet-button admin-panel-button" type="button" hidden>⚙ 管理パネル</button>
@@ -106,16 +104,7 @@
         </details>
       </section>
       <div class="board-workspace">
-        <section class="parking-board" aria-label="駐車場・貸出場所">
-          <div class="parking-toolbar">
-            <div id="parking-shortcuts" class="parking-shortcuts" aria-label="駐車場へ移動"></div>
-            <div class="parking-bulk-actions">
-              <button type="button" id="collapse-all-lots" class="quiet-button">すべて折りたたむ</button>
-              <button type="button" id="expand-all-lots" class="quiet-button">すべて展開</button>
-            </div>
-          </div>
-          <section id="parking-grid" class="parking-grid" aria-label="駐車場・貸出場所"></section>
-        </section>
+        <section id="parking-grid" class="parking-grid" aria-label="駐車場・貸出場所"></section>
         <aside class="vehicle-catalog" aria-labelledby="catalog-title">
           <details id="catalog-panel" open>
             <summary class="status-summary">
@@ -144,7 +133,6 @@
         <button id="manage-logistics-button" class="admin-card" type="button"><b>店舗・距離</b><span>店舗と駐車場までの所要時間</span></button>
         <button id="manage-employees-button" class="admin-card" type="button"><b>従業員アカウント</b><span>作成・パスワード変更・削除</span></button>
         <button id="export-vehicles-button" class="admin-card" type="button"><b>車両データをエクスポート</b><span>MariaDB 移行用 JSON をダウンロード（認証情報は含みません）</span></button>
-        <button id="manage-franchises-button" class="admin-card" type="button" hidden><b>加盟店・アカウント</b><span>加盟店と管理者アカウントの作成</span></button>
       </div>
       <p id="admin-error" class="error-message" role="alert"></p>
     </div>
@@ -386,24 +374,7 @@
       <p id="location-error" class="error-message" role="alert"></p>
     </div>
   </dialog>
-  <dialog id="franchise-dialog">
-    <div class="franchise-form">
-      <div class="dialog-heading">
-        <div><h2>加盟店管理</h2></div>
-        <button type="button" id="close-franchise-dialog" class="close-button" aria-label="閉じる">×</button>
-      </div>
-      <div id="franchise-list" class="franchise-list"></div>
-      <form id="add-franchise-form" class="add-franchise-form">
-        <label>加盟店名<input name="name" required maxlength="80" placeholder="例：〇〇店"></label>
-        <label>管理者ユーザー名<input name="username" required maxlength="80" autocomplete="off"></label>
-        <label>初期パスワード（12文字以上）<input name="password" type="password" required minlength="12" maxlength="1024" autocomplete="new-password"></label>
-        <button type="submit" class="primary-button">加盟店とアカウントを作成</button>
-      </form>
-      <p id="franchise-error" class="error-message" role="alert"></p>
-    </div>
-  </dialog>
   <script src="/static/id.js"></script>
-  <script src="/static/i18n.js"></script>
   <script src="/static/pwa.js"></script>
   <script src="/static/app.js" defer></script>
   <script type="module" src="/static/inspection3d.mjs"></script>
