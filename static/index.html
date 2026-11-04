@@ -106,7 +106,16 @@
         </details>
       </section>
       <div class="board-workspace">
-        <section id="parking-grid" class="parking-grid" aria-label="駐車場・貸出場所"></section>
+        <section class="parking-board" aria-label="駐車場・貸出場所">
+          <div class="parking-toolbar">
+            <div id="parking-shortcuts" class="parking-shortcuts" aria-label="駐車場へ移動"></div>
+            <div class="parking-bulk-actions">
+              <button type="button" id="collapse-all-lots" class="quiet-button">すべて折りたたむ</button>
+              <button type="button" id="expand-all-lots" class="quiet-button">すべて展開</button>
+            </div>
+          </div>
+          <section id="parking-grid" class="parking-grid" aria-label="駐車場・貸出場所"></section>
+        </section>
         <aside class="vehicle-catalog" aria-labelledby="catalog-title">
           <details id="catalog-panel" open>
             <summary class="status-summary">

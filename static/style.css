@@ -45,8 +45,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .summary-card span { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .summary-card b { font-size: 20px; }
 .board-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 16px; margin-top: 16px; }
+.parking-board { min-width: 0; }
+.parking-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.parking-shortcuts, .parking-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.parking-shortcuts { min-width: 0; }
+.parking-bulk-actions { flex: none; }
+.parking-shortcuts:empty { display: none; }
+.parking-bulk-actions .quiet-button { padding: 7px 10px; font-size: 11px; }
+.lot-jump-chip { border: 1px solid #d5e0e7; border-radius: 999px; background: #fff; color: #53657b; padding: 6px 10px; font-size: 11px; white-space: nowrap; }
+.lot-jump-chip:hover { border-color: #8ecfd1; color: var(--teal); }
 .parking-grid { min-width: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px; }
 .lot-card { flex: 0 0 clamp(180px, calc(var(--lot-width, 50%) - 7px), 100%); min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; box-shadow: 0 2px 7px #172b4d08; }
+.lot-card { scroll-margin-top: 90px; transition: box-shadow .18s ease, outline-color .18s ease; }
+.lot-card.is-collapsed .lot-area, .lot-card.is-collapsed .lot-drawing-tools { display: none; }
+.lot-card.jump-highlight { outline: 3px solid #65cbd3; outline-offset: 3px; box-shadow: 0 5px 18px #087e8b26; }
 .lot-card.resizing { z-index: 2; box-shadow: 0 5px 20px #172b4d24; }
 .lot-heading { min-height: 48px; padding: 6px 10px 6px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f4; cursor: grab; }
 .lot-heading:active { cursor: grabbing; }
@@ -57,6 +69,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .lot-count { font-size: 10px; background: #f0f4f7; color: #748298; border-radius: 20px; padding: 4px 8px; }
 .lot-navigation-icon { color: var(--teal); font-size: 12px; font-weight: 750; }
 .lot-controls { display: flex; align-items: center; gap: 4px; }
+.lot-collapse-control { flex: none; width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #53657b; font-size: 15px; line-height: 1; }
+.lot-collapse-control:hover { border-color: #8ecfd1; color: var(--teal); }
 .lot-control { border: 1px solid var(--border); background: #fff; color: #53657b; border-radius: 6px; min-width: 30px; height: 28px; font-size: 10px; }
 .lot-control:hover { border-color: #8ecfd1; color: var(--teal); }
 .layout-control { display: none; }
@@ -163,7 +177,7 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .assessment-field-control input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--teal); }
 .assessment-field-suffix { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .assessment-notes-field { display: grid; gap: 6px; margin-top: 12px; color: #44566f; font-size: 12px; font-weight: 650; }
-.assessment-notes-field textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid #d9e2e9; border-radius: 8px; padding: 10px; color: var(--ink); font: inherit; line-height: 1.5; }
+.assessment-notes-field textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid #d9e2e9; border-radius: 8px; padding: 10px; color: var(--ink); font: inherit; font-size: 16px; line-height: 1.5; }
 .rating-control { display: flex; gap: 3px; }
 .rating-control button { width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 7px; color: #728197; background: #fff; font-size: 12px; }
 .rating-control button.active { border-color: #d5a944; color: #8b6200; background: #fff3cf; font-weight: 750; }
@@ -250,7 +264,7 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .add-job-form .primary-button { grid-column: 1 / -1; }
 .add-task-form { display: grid; gap: 10px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid #edf0f4; }
 .add-task-form label { display: grid; gap: 6px; color: #44566f; font-size: 12px; font-weight: 650; }
-.add-task-form input, .add-task-form textarea { width: 100%; min-width: 0; border: 1px solid #d9e2e9; border-radius: 8px; padding: 9px 11px; color: var(--ink); background: #fff; font: inherit; }
+.add-task-form input, .add-task-form textarea { width: 100%; min-width: 0; border: 1px solid #d9e2e9; border-radius: 8px; padding: 9px 11px; color: var(--ink); background: #fff; font: inherit; font-size: 16px; }
 .add-task-form textarea { resize: vertical; line-height: 1.5; }
 .vehicle-inspection-dates { margin-top: 16px; }
 .vehicle-inspection-dates h3 { margin: 0 0 8px; font-size: 13px; }
@@ -387,11 +401,11 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .catalog-search { width: 100%; box-sizing: border-box; border: 1px solid #d9e2e9; border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; color: var(--ink); }
 @keyframes token-blink { 0%, 100% { box-shadow: 0 0 0 0 #ffb300; transform: translate(-50%, -50%) scale(1); } 25%, 75% { box-shadow: 0 0 0 8px #ffb300cc; transform: translate(-50%, -50%) scale(1.25); } 50% { box-shadow: 0 0 0 0 #ffb300; transform: translate(-50%, -50%) scale(1); } }
 .vehicle-token.token-blink { animation: token-blink .8s ease-in-out 2; z-index: 20; }
-.catalog-search { flex: 1; min-width: 0; width: auto; margin: 0; padding: 6px 9px; font-size: 13px; }
+.catalog-search { flex: 1; min-width: 0; width: auto; margin: 0; padding: 6px 9px; font-size: 16px; }
 .job-time-inputs { position: relative; display: flex; gap: 6px; }
 .job-time-inputs #job-time-text { flex: 1; }
 .job-time-picker { position: absolute; z-index: 1; top: 0; right: 0; width: 44px; height: 100%; padding: 0; opacity: .01; pointer-events: auto; cursor: pointer; }
-.language-select { border: 1px solid #d9e2e9; border-radius: 8px; background: #fff; color: var(--ink); padding: 7px 9px; font-size: 13px; }
+.language-select { border: 1px solid #d9e2e9; border-radius: 8px; background: #fff; color: var(--ink); padding: 7px 9px; font-size: 16px; }
 .login-language { position: fixed; top: 14px; right: 14px; z-index: 5; }
 .login-screen { position: relative; }
 .dialog-heading { position: sticky; top: 0; z-index: 20; background: #fff; padding: 18px 0 10px; margin: 0 0 4px; border-bottom: 1px solid var(--border); }
@@ -457,7 +471,7 @@ dialog > :is(form, div):first-child { padding-top: 0; }
 .location-extra input[type=checkbox] { width: 16px; height: 16px; }
 .priority-editor { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; background: #f6f9fb; border-radius: 10px; }
 .priority-title { flex-basis: 100%; font-size: 11px; font-weight: 700; color: #6b7a8c; }
-.priority-editor select { border: 1px solid #d9e2e9; border-radius: 999px; padding: 4px 8px; font-size: 11px; background: #fff; }
+.priority-editor select { border: 1px solid #d9e2e9; border-radius: 999px; padding: 4px 8px; font-size: 16px; background: #fff; }
 .add-location-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 
 /* Logistics dialog */
@@ -494,3 +508,18 @@ dialog > :is(form, div):first-child { padding-top: 0; }
   .class-model-row, .add-class-model-form { grid-template-columns: minmax(0, 1fr) auto; }
   .class-model-row .danger-button { grid-column: 2; }
 }
+
+@media (max-width: 640px) {
+  .parking-toolbar { flex-direction: column; }
+  .parking-bulk-actions { width: 100%; }
+  .parking-bulk-actions .quiet-button { flex: 1; min-height: 40px; font-size: 12px; }
+  .lot-jump-chip { min-height: 40px; padding: 8px 12px; font-size: 12px; }
+  .lot-control, .lot-collapse-control { min-width: 40px; min-height: 40px; }
+  .lot-control { font-size: 12px; }
+  .lot-heading { gap: 8px; }
+  .lot-controls { gap: 6px; }
+  .type-filter { min-height: 40px; padding: 8px 10px; font-size: 12px; }
+  .filter-button { min-height: 40px; font-size: 12px; }
+}
+
+input, select, textarea { font-size: 16px; }
