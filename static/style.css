@@ -491,7 +491,7 @@ input, select, textarea { font-size: 16px; }
 .drop-wheel { position: fixed; inset: 0; z-index: 70; pointer-events: none; opacity: 0; transition: opacity .16s ease; }
 .drop-wheel[hidden] { display: none; }
 .drop-wheel.is-visible { opacity: 1; }
-.drop-wheel-disc { position: absolute; right: 0; top: 50%; width: 36vmin; height: 76vmin; max-width: 168px; max-height: 600px; transform: translateY(-50%) translateX(30px); transition: transform .18s ease; border-radius: 999px 0 0 999px; background: radial-gradient(circle at 100% 50%, #0d5f6dc4, #07333fcf); box-shadow: -10px 0 26px #07333f30; border: 1px solid #ffffff2e; border-right: none; backdrop-filter: blur(3px); }
+.drop-wheel-disc { position: absolute; right: 0; top: 50%; width: min(38vmin, 180px); height: min(94dvh, 720px); transform: translateY(-50%) translateX(30px); transition: transform .18s ease; border-radius: 999px 0 0 999px; background: radial-gradient(circle at 100% 50%, #0d5f6dc4, #07333fcf); box-shadow: -10px 0 26px #07333f30; border: 1px solid #ffffff2e; border-right: none; backdrop-filter: blur(3px); }
 .drop-wheel.is-visible .drop-wheel-disc { transform: translateY(-50%) translateX(0); }
 .drop-wheel-item { position: absolute; transform: translate(-50%, -50%); max-width: 96px; padding: 4px 8px; border-radius: 999px; background: #ffffff1c; border: 1px solid #ffffff33; color: #eaf6f7; font-size: 10.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: transform .12s ease, background .12s ease; }
 .drop-wheel-item.is-target { background: #ffb300; border-color: #ffd54a; color: #402e00; font-weight: 800; transform: translate(-50%, -50%) scale(1.45); box-shadow: 0 8px 22px #0007; z-index: 2; }

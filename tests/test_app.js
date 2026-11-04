@@ -1465,6 +1465,9 @@ test("wires per-lot heading-click collapse, drag drop-wheel, debounced refresh a
   assert.match(script, /if \(wheelDropped\) focusMovedVehicle\(current\.id, wheelLot\.id\)/);
   assert.match(script, /just-moved/);
   assert.match(css, /\.vehicle-token\.just-moved/);
+  assert.match(css, /\.drop-wheel-disc[^}]*height:\s*min\(94dvh/);
+  assert.match(script, /\(index \/ \(items\.length - 1\)\) \* 2 - 1/);
+  assert.match(script, /dy \/ span/);
   assert.match(css, /@keyframes token-blink/);
   assert.match(css, /\.drop-wheel-disc/);
   assert.match(css, /\.drop-wheel-item\.is-target/);
