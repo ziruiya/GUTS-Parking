@@ -802,6 +802,7 @@
       clientX: event.clientX,
       clientY: event.clientY,
       moved: false,
+      wheel: event.pointerType !== "mouse",
     };
     token.setPointerCapture(event.pointerId);
     dragged.scrollFrame = requestAnimationFrame(autoScrollWhileDragging);
@@ -818,8 +819,10 @@
     dragged.ghost.style.left = `${event.clientX}px`;
     dragged.ghost.style.top = `${event.clientY}px`;
     updateDropTarget(event.clientX, event.clientY);
-    if (dropWheel?.hidden) showDropWheel();
-    updateDropWheel(event.clientX, event.clientY);
+    if (dragged.wheel) {
+      if (dropWheel?.hidden) showDropWheel();
+      updateDropWheel(event.clientX, event.clientY);
+    }
   }
 
   function updateDropTarget(x, y) {
@@ -853,8 +856,8 @@
     const items = [...dropWheelItems.children];
     items.forEach((item, index) => {
       const angle = (-80 + (items.length === 1 ? 80 : (160 * index) / (items.length - 1))) * Math.PI / 180;
-      item.style.left = `${wheelGeom.cx - Math.cos(angle) * wheelGeom.rx * 0.66}px`;
-      item.style.top = `${wheelGeom.cy + Math.sin(angle) * wheelGeom.ry * 0.86}px`;
+      item.style.left = `${wheelGeom.cx - Math.cos(angle) * wheelGeom.rx * 0.60}px`;
+      item.style.top = `${wheelGeom.cy + Math.sin(angle) * wheelGeom.ry * 0.84}px`;
     });
     requestAnimationFrame(() => dropWheel.classList.add("is-visible"));
   }
@@ -872,7 +875,11 @@
       target = lots[index] || null;
     }
     const currentLotId = vehicles.find((vehicle) => vehicle.id === dragged?.id)?.parking_lot_id;
-    wheelTarget = target && target.id !== currentLotId ? target : null;
+    const nextTarget = target && target.id !== currentLotId ? target : null;
+    if ((nextTarget?.id ?? null) !== (wheelTarget?.id ?? null) && nextTarget) {
+      try { navigator.vibrate?.(8); } catch { /* vibration is best-effort */ }
+    }
+    wheelTarget = nextTarget;
     for (const item of dropWheelItems.children) {
       item.classList.toggle("is-target", Boolean(target) && Number(item.dataset.lotId) === target.id);
     }
@@ -890,6 +897,20 @@
     dropWheel.classList.remove("is-visible");
     dropWheel.hidden = true;
     dropWheelItems.replaceChildren();
+  }
+
+  function focusMovedVehicle(vehicleId, lotId) {
+    if (collapsedLotIds.has(String(lotId))) {
+      setLotCollapsed(lotId, false);
+      render();
+    }
+    const card = document.querySelector(`.lot-card[data-lot-id="${lotId}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    const token = card.querySelector(`.vehicle-token[data-id="${vehicleId}"]`);
+    if (!token) return;
+    token.classList.add("just-moved");
+    window.setTimeout(() => token.classList.remove("just-moved"), 2800);
   }
 
   function wheelDropPosition(lotId, vehicleId) {
@@ -953,6 +974,7 @@
     if (!current.moved) return;
     suppressClick = true;
     if (wheelLot) {
+      let wheelDropped = false;
       try {
         await api(`/api/vehicles/${current.id}`, {
           method: "PATCH",
@@ -961,10 +983,12 @@
             ...wheelDropPosition(wheelLot.id, current.id),
           }),
         });
+        wheelDropped = true;
       } catch (error) {
         showError(error);
       }
       await loadBoard();
+      if (wheelDropped) focusMovedVehicle(current.id, wheelLot.id);
       window.setTimeout(() => { suppressClick = false; }, 0);
       return;
     }

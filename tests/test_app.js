@@ -1460,6 +1460,12 @@ test("wires per-lot heading-click collapse, drag drop-wheel, debounced refresh a
   assert.match(script, /function updateDropWheel\(x, y\)/);
   assert.match(script, /function wheelDropPosition\(lotId, vehicleId\)/);
   assert.match(script, /parking_lot_id: wheelLot\.id/);
+  assert.match(script, /wheel: event\.pointerType !== "mouse"/);
+  assert.match(script, /function focusMovedVehicle\(vehicleId, lotId\)/);
+  assert.match(script, /if \(wheelDropped\) focusMovedVehicle\(current\.id, wheelLot\.id\)/);
+  assert.match(script, /just-moved/);
+  assert.match(css, /\.vehicle-token\.just-moved/);
+  assert.match(css, /@keyframes token-blink/);
   assert.match(css, /\.drop-wheel-disc/);
   assert.match(css, /\.drop-wheel-item\.is-target/);
   assert.doesNotMatch(script, /can_manage_franchises|\/api\/franchises/);
