@@ -855,9 +855,10 @@
     wheelGeom = { cx: rect.right, cy: rect.top + rect.height / 2, rx: rect.width, ry: rect.height / 2 };
     const items = [...dropWheelItems.children];
     items.forEach((item, index) => {
-      const angle = (-80 + (items.length === 1 ? 80 : (160 * index) / (items.length - 1))) * Math.PI / 180;
-      item.style.left = `${wheelGeom.cx - Math.cos(angle) * wheelGeom.rx * 0.60}px`;
-      item.style.top = `${wheelGeom.cy + Math.sin(angle) * wheelGeom.ry * 0.84}px`;
+      const t = items.length === 1 ? 0 : (index / (items.length - 1)) * 2 - 1;
+      const u = t * 0.88;
+      item.style.left = `${wheelGeom.cx - Math.sqrt(Math.max(0, 1 - u * u)) * wheelGeom.rx * 0.68}px`;
+      item.style.top = `${wheelGeom.cy + u * wheelGeom.ry}px`;
     });
     requestAnimationFrame(() => dropWheel.classList.add("is-visible"));
   }
@@ -866,12 +867,12 @@
     if (!wheelGeom) { wheelTarget = null; return; }
     const dx = wheelGeom.cx - x;
     const dy = y - wheelGeom.cy;
-    const norm = Math.hypot(dx / wheelGeom.rx, dy / wheelGeom.ry);
+    const span = wheelGeom.ry * 0.88;
+    const t = span > 0 ? dy / span : 0;
     let target = null;
-    if (dx > wheelGeom.rx * 0.04 && norm < 1.3 && lots.length) {
-      const angle = Math.atan2(dy / wheelGeom.ry, dx / wheelGeom.rx) * 180 / Math.PI;
+    if (dx > wheelGeom.rx * 0.04 && dx < wheelGeom.rx * 1.45 && Math.abs(t) <= 1.12 && lots.length) {
       const index = Math.max(0, Math.min(lots.length - 1,
-        Math.round(((angle + 80) / 160) * Math.max(1, lots.length - 1))));
+        Math.round(((t + 1) / 2) * (lots.length - 1))));
       target = lots[index] || null;
     }
     const currentLotId = vehicles.find((vehicle) => vehicle.id === dragged?.id)?.parking_lot_id;
