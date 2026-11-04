@@ -46,22 +46,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .summary-card b { font-size: 20px; }
 .board-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 16px; margin-top: 16px; }
 .parking-grid { min-width: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px; }
-.lot-card { flex: 0 0 clamp(180px, calc(var(--lot-width, 50%) - 7px), 100%); min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; box-shadow: 0 2px 7px #172b4d08; }
+.lot-card { flex: 0 0 clamp(180px, calc(var(--lot-width, 50%) - 7px), 100%); min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: 0 3px 12px #172b4d0f; }
 .lot-card { scroll-margin-top: 90px; transition: box-shadow .18s ease, outline-color .18s ease; }
 .lot-card.is-collapsed .lot-area, .lot-card.is-collapsed .lot-drawing-tools { display: none; }
 .lot-card.resizing { z-index: 2; box-shadow: 0 5px 20px #172b4d24; }
-.lot-heading-title.lot-toggle { cursor: pointer; }
 .lot-heading { min-height: 48px; padding: 6px 10px 6px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f4; cursor: grab; }
 .lot-heading:active { cursor: grabbing; }
 .lot-card.reordering { opacity: .5; }
 .lot-heading-title { min-width: 0; display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; }
-.lot-heading-title[href]:hover h3 { color: var(--teal); text-decoration: underline; text-underline-offset: 3px; }
 .lot-heading h3 { font-size: 13px; margin: 0; }
 .lot-count { font-size: 10px; background: #f0f4f7; color: #748298; border-radius: 20px; padding: 4px 8px; }
 .lot-navigation-icon { color: var(--teal); font-size: 12px; font-weight: 750; }
 .lot-controls { display: flex; align-items: center; gap: 4px; }
-.lot-collapse-control { flex: none; width: 30px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #53657b; font-size: 15px; line-height: 1; }
-.lot-collapse-control:hover { border-color: #8ecfd1; color: var(--teal); }
 .lot-control { border: 1px solid var(--border); background: #fff; color: #53657b; border-radius: 6px; min-width: 30px; height: 28px; font-size: 10px; }
 .lot-control:hover { border-color: #8ecfd1; color: var(--teal); }
 .layout-control { display: none; }
@@ -473,7 +469,7 @@ dialog > :is(form, div):first-child { padding-top: 0; }
 }
 
 @media (max-width: 640px) {
-          .lot-control, .lot-collapse-control { min-width: 40px; min-height: 40px; }
+          .lot-control { min-width: 40px; min-height: 40px; }
   .lot-control { font-size: 12px; }
   .lot-heading { gap: 8px; }
   .lot-controls { gap: 6px; }
@@ -482,3 +478,23 @@ dialog > :is(form, div):first-child { padding-top: 0; }
 }
 
 input, select, textarea { font-size: 16px; }
+
+/* Heading click-to-collapse affordances */
+.lot-heading { transition: background .15s ease; }
+.lot-heading:hover { background: #f2f8f9; }
+.lot-heading:not([draggable="true"]) { cursor: pointer; }
+.lot-chevron { flex: none; width: 16px; color: #8aa0b4; font-size: 11px; text-align: center; transition: transform .18s ease; }
+.lot-card.is-collapsed .lot-chevron { transform: rotate(-90deg); }
+.lot-card.is-empty .lot-heading h3 { color: var(--muted); }
+
+/* Drag drop-wheel: semicircle quick-drop targets shown while dragging a vehicle */
+.drop-wheel { position: fixed; inset: 0; z-index: 70; pointer-events: none; opacity: 0; transition: opacity .16s ease; }
+.drop-wheel[hidden] { display: none; }
+.drop-wheel.is-visible { opacity: 1; }
+.drop-wheel-disc { position: absolute; right: 0; top: 50%; width: 46vmin; height: 92vmin; max-width: 330px; max-height: 660px; transform: translateY(-50%) translateX(36px); transition: transform .18s ease; border-radius: 999px 0 0 999px; background: radial-gradient(circle at 100% 50%, #0d5f6dee, #07333fe8); box-shadow: -14px 0 34px #07333f38; border: 1px solid #ffffff2e; border-right: none; }
+.drop-wheel.is-visible .drop-wheel-disc { transform: translateY(-50%) translateX(0); }
+.drop-wheel-item { position: absolute; transform: translate(-50%, -50%); max-width: 118px; padding: 4px 9px; border-radius: 999px; background: #ffffff17; border: 1px solid #ffffff2e; color: #eaf6f7; font-size: 11px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drop-wheel-item.is-target { background: #ffb300; border-color: #ffb300; color: #402e00; transform: translate(-50%, -50%) scale(1.18); }
+.drop-wheel-item.is-current { opacity: .45; }
+.drop-wheel-center { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); max-width: 118px; color: #fff; font-size: 14px; font-weight: 800; text-align: center; text-shadow: 0 1px 6px #0007; }
+.primary-button:active, .quiet-button:active { transform: scale(.98); }

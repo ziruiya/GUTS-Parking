@@ -1441,7 +1441,7 @@ test("wires catalog search, token blink and labelled job time inputs", () => {
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
-test("wires per-lot title-click collapse, debounced refresh and touch-safe form sizes", () => {
+test("wires per-lot heading-click collapse, drag drop-wheel, debounced refresh and touch-safe form sizes", () => {
   const html = fs.readFileSync(path.join(__dirname, "../static/index.html"), "utf8");
   const script = fs.readFileSync(path.join(__dirname, "../static/app.js"), "utf8");
   const css = fs.readFileSync(path.join(__dirname, "../static/style.css"), "utf8");
@@ -1452,8 +1452,16 @@ test("wires per-lot title-click collapse, debounced refresh and touch-safe form 
   assert.match(script, /guts-collapsed-lots:/);
   assert.match(script, /collapsedLotIds\.has\(String\(lot\.id\)\)/);
   assert.doesNotMatch(script, /jumpToLot|setAllLotsCollapsed|renderParkingShortcuts/);
-  assert.match(script, /lot-heading-title lot-toggle/);
-  assert.match(script, /headingTitle\.addEventListener\("click"/);
+  assert.doesNotMatch(script, /lot-collapse-control/);
+  assert.match(script, /heading\.addEventListener\("click"/);
+  assert.match(script, /lot-chevron/);
+  assert.match(html, /id="drop-wheel"/);
+  assert.match(script, /function showDropWheel\(\)/);
+  assert.match(script, /function updateDropWheel\(x, y\)/);
+  assert.match(script, /function wheelDropPosition\(lotId, vehicleId\)/);
+  assert.match(script, /parking_lot_id: wheelLot\.id/);
+  assert.match(css, /\.drop-wheel-disc/);
+  assert.match(css, /\.drop-wheel-item\.is-target/);
   assert.doesNotMatch(script, /can_manage_franchises|\/api\/franchises/);
   assert.match(script, /collapsedHeading/);
   assert.match(script, /scheduleBoardRefresh/);
@@ -1466,7 +1474,8 @@ test("wires per-lot title-click collapse, debounced refresh and touch-safe form 
   assert.match(css, /\.assessment-notes-field textarea[^}]*font-size:\s*16px/);
   assert.match(css, /\.add-task-form input,\s*\.add-task-form textarea[^}]*font-size:\s*16px/);
   assert.match(css, /input,\s*select,\s*textarea\s*\{\s*font-size:\s*16px;\s*\}/);
-  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.lot-control,\s*\.lot-collapse-control \{ min-width: 40px; min-height: 40px; \}/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.lot-control \{ min-width: 40px; min-height: 40px; \}/);
+  assert.doesNotMatch(css, /lot-collapse-control/);
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.lot-control \{ font-size: 12px; \}/);
   assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.type-filter \{ min-height: 40px; padding: 8px 10px; font-size: 12px; \}/);
   assert.doesNotMatch(html, /maximum-scale|user-scalable\s*=/i);

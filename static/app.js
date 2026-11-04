@@ -45,6 +45,11 @@
   let activeStatus = "all";
   let socket;
   let dragged = null;
+  let wheelTarget = null;
+  let wheelGeom = null;
+  const dropWheel = document.querySelector("#drop-wheel");
+  const dropWheelItems = document.querySelector("#drop-wheel-items");
+  const dropWheelLabel = document.querySelector("#drop-wheel-label");
   let resizing = null;
   let editingLotId = null;
   let drawingLotId = null;
@@ -288,8 +293,10 @@
     card.dataset.lotId = lot.id;
     const isCollapsed = collapsedLotIds.has(String(lot.id));
     card.classList.toggle("is-collapsed", isCollapsed);
+    card.classList.toggle("is-empty", inLot.length === 0);
     const heading = document.createElement("div");
     heading.className = "lot-heading";
+    let lotDragEndedAt = 0;
     heading.draggable = canManageLocations;
     heading.title = canManageLocations ? "エリアカードをドラッグして並べ替え" : "";
     heading.addEventListener("dragstart", (event) => {
@@ -305,7 +312,17 @@
       event.dataTransfer.effectAllowed = "move";
       card.classList.add("reordering");
     });
-    heading.addEventListener("dragend", () => card.classList.remove("reordering"));
+    heading.addEventListener("dragend", () => {
+      card.classList.remove("reordering");
+      lotDragEndedAt = Date.now();
+    });
+    heading.addEventListener("click", (event) => {
+      if (event.target.closest("button, a, input, select, textarea")) return;
+      if (Date.now() - lotDragEndedAt < 200) return;
+      if (editingLotId === lot.id) return;
+      setLotCollapsed(lot.id, !isCollapsed);
+      render();
+    });
     card.addEventListener("dragover", (event) => {
       if (canManageLocations && event.dataTransfer.types.includes("text/plain")) {
         event.preventDefault();
@@ -319,12 +336,13 @@
       if (sourceId && sourceId !== lot.id) reorderLots(sourceId, lot.id).catch(showError);
     });
     const headingTitle = document.createElement("div");
-    headingTitle.className = "lot-heading-title lot-toggle";
+    headingTitle.className = "lot-heading-title";
     headingTitle.title = isCollapsed ? "クリックで展開する" : "クリックで折りたたむ";
-    headingTitle.addEventListener("click", () => {
-      setLotCollapsed(lot.id, !isCollapsed);
-      render();
-    });
+    const chevron = document.createElement("span");
+    chevron.className = "lot-chevron";
+    chevron.textContent = "▾";
+    chevron.setAttribute("aria-hidden", "true");
+    headingTitle.append(chevron);
     const title = document.createElement("h3");
     title.textContent = lot.name;
     const count = document.createElement("span");
@@ -349,19 +367,6 @@
     heading.append(headingTitle);
     const controls = document.createElement("div");
     controls.className = "lot-controls";
-    const collapse = document.createElement("button");
-    collapse.type = "button";
-    collapse.className = "lot-collapse-control";
-    collapse.textContent = isCollapsed ? "+" : "−";
-    collapse.title = isCollapsed ? "駐車場を展開する" : "駐車場を折りたたむ";
-    collapse.setAttribute("aria-label", collapse.title);
-    collapse.setAttribute("aria-expanded", String(!isCollapsed));
-    collapse.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setLotCollapsed(lot.id, !isCollapsed);
-      render();
-    });
-    controls.append(collapse);
     if (canManageLocations) {
       const resize = document.createElement("button");
       resize.type = "button";
@@ -813,12 +818,94 @@
     dragged.ghost.style.left = `${event.clientX}px`;
     dragged.ghost.style.top = `${event.clientY}px`;
     updateDropTarget(event.clientX, event.clientY);
+    if (dropWheel?.hidden) showDropWheel();
+    updateDropWheel(event.clientX, event.clientY);
   }
 
   function updateDropTarget(x, y) {
     document.querySelectorAll(".lot-area.drop-target").forEach((area) => area.classList.remove("drop-target"));
     document.elementFromPoint(x, y)
       ?.closest(".lot-area")?.classList.add("drop-target");
+  }
+
+  const WHEEL_DROP_GRID = [];
+  for (const gridY of [0.0625, 0.1875, 0.3125, 0.4375, 0.5625, 0.6875, 0.8125, 0.9375]) {
+    for (const gridX of [0.125, 0.375, 0.625, 0.875]) WHEEL_DROP_GRID.push([gridX, gridY]);
+  }
+
+  function showDropWheel() {
+    if (!dropWheel) return;
+    dropWheel.hidden = false;
+    if (!dropWheelItems.childElementCount) {
+      const currentLotId = vehicles.find((vehicle) => vehicle.id === dragged?.id)?.parking_lot_id;
+      for (const lot of lots) {
+        const item = document.createElement("span");
+        item.className = "drop-wheel-item";
+        if (lot.id === currentLotId) item.classList.add("is-current");
+        item.dataset.lotId = lot.id;
+        item.textContent = lot.name;
+        dropWheelItems.append(item);
+      }
+    }
+    const disc = dropWheel.querySelector(".drop-wheel-disc");
+    const rect = disc.getBoundingClientRect();
+    wheelGeom = { cx: rect.right, cy: rect.top + rect.height / 2, rx: rect.width, ry: rect.height / 2 };
+    const items = [...dropWheelItems.children];
+    items.forEach((item, index) => {
+      const angle = (-80 + (items.length === 1 ? 80 : (160 * index) / (items.length - 1))) * Math.PI / 180;
+      item.style.left = `${wheelGeom.cx - Math.cos(angle) * wheelGeom.rx * 0.66}px`;
+      item.style.top = `${wheelGeom.cy + Math.sin(angle) * wheelGeom.ry * 0.86}px`;
+    });
+    requestAnimationFrame(() => dropWheel.classList.add("is-visible"));
+  }
+
+  function updateDropWheel(x, y) {
+    if (!wheelGeom) { wheelTarget = null; return; }
+    const dx = wheelGeom.cx - x;
+    const dy = y - wheelGeom.cy;
+    const norm = Math.hypot(dx / wheelGeom.rx, dy / wheelGeom.ry);
+    let target = null;
+    if (dx > wheelGeom.rx * 0.04 && norm < 1.3 && lots.length) {
+      const angle = Math.atan2(dy / wheelGeom.ry, dx / wheelGeom.rx) * 180 / Math.PI;
+      const index = Math.max(0, Math.min(lots.length - 1,
+        Math.round(((angle + 80) / 160) * Math.max(1, lots.length - 1))));
+      target = lots[index] || null;
+    }
+    const currentLotId = vehicles.find((vehicle) => vehicle.id === dragged?.id)?.parking_lot_id;
+    wheelTarget = target && target.id !== currentLotId ? target : null;
+    for (const item of dropWheelItems.children) {
+      item.classList.toggle("is-target", Boolean(target) && Number(item.dataset.lotId) === target.id);
+    }
+    if (dropWheelLabel) {
+      dropWheelLabel.textContent = target
+        ? (target.id === currentLotId ? `${target.name}（現在地）` : `${target.name} へ移動`)
+        : "右端の半円へドラッグ";
+    }
+  }
+
+  function hideDropWheel() {
+    wheelTarget = null;
+    wheelGeom = null;
+    if (!dropWheel) return;
+    dropWheel.classList.remove("is-visible");
+    dropWheel.hidden = true;
+    dropWheelItems.replaceChildren();
+  }
+
+  function wheelDropPosition(lotId, vehicleId) {
+    const counts = new Map();
+    for (const vehicle of vehicles) {
+      if (vehicle.parking_lot_id !== lotId || vehicle.id === vehicleId) continue;
+      const key = `${vehicle.position_x.toFixed(2)},${vehicle.position_y.toFixed(2)}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let best = WHEEL_DROP_GRID[0];
+    let bestCount = Infinity;
+    for (const point of WHEEL_DROP_GRID) {
+      const count = counts.get(`${point[0].toFixed(2)},${point[1].toFixed(2)}`) || 0;
+      if (count < bestCount) { best = point; bestCount = count; }
+    }
+    return { position_x: best[0], position_y: best[1] };
   }
 
   function autoScrollWhileDragging() {
@@ -844,6 +931,7 @@
   async function endDrag(event, cancelled = false) {
     if (!dragged || event.pointerId !== dragged.pointerId) return;
     const current = dragged;
+    const wheelLot = !cancelled ? wheelTarget : null;
     cancelAnimationFrame(current.scrollFrame);
     current.clientX = event.clientX;
     current.clientY = event.clientY;
@@ -855,6 +943,7 @@
     const collapsedHeading = dropTarget?.closest(".lot-card.is-collapsed .lot-heading");
     dragged = null;
     current.ghost.remove();
+    hideDropWheel();
     document.querySelectorAll(".lot-area.drop-target").forEach((area) => area.classList.remove("drop-target"));
     if (collapsedHeading) {
       setLotCollapsed(collapsedHeading.closest(".lot-card").dataset.lotId, false);
@@ -863,6 +952,22 @@
     }
     if (!current.moved) return;
     suppressClick = true;
+    if (wheelLot) {
+      try {
+        await api(`/api/vehicles/${current.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            parking_lot_id: wheelLot.id,
+            ...wheelDropPosition(wheelLot.id, current.id),
+          }),
+        });
+      } catch (error) {
+        showError(error);
+      }
+      await loadBoard();
+      window.setTimeout(() => { suppressClick = false; }, 0);
+      return;
+    }
     if (!dropArea) {
       window.setTimeout(() => { suppressClick = false; }, 0);
       return;
