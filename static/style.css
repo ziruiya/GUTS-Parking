@@ -45,21 +45,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .summary-card span { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .summary-card b { font-size: 20px; }
 .board-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; align-items: start; gap: 16px; margin-top: 16px; }
-.parking-board { min-width: 0; }
-.parking-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-.parking-shortcuts, .parking-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.parking-shortcuts { min-width: 0; }
-.parking-bulk-actions { flex: none; }
-.parking-shortcuts:empty { display: none; }
-.parking-bulk-actions .quiet-button { padding: 7px 10px; font-size: 11px; }
-.lot-jump-chip { border: 1px solid #d5e0e7; border-radius: 999px; background: #fff; color: #53657b; padding: 6px 10px; font-size: 11px; white-space: nowrap; }
-.lot-jump-chip:hover { border-color: #8ecfd1; color: var(--teal); }
 .parking-grid { min-width: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px; }
 .lot-card { flex: 0 0 clamp(180px, calc(var(--lot-width, 50%) - 7px), 100%); min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 13px; overflow: hidden; box-shadow: 0 2px 7px #172b4d08; }
 .lot-card { scroll-margin-top: 90px; transition: box-shadow .18s ease, outline-color .18s ease; }
 .lot-card.is-collapsed .lot-area, .lot-card.is-collapsed .lot-drawing-tools { display: none; }
-.lot-card.jump-highlight { outline: 3px solid #65cbd3; outline-offset: 3px; box-shadow: 0 5px 18px #087e8b26; }
 .lot-card.resizing { z-index: 2; box-shadow: 0 5px 20px #172b4d24; }
+.lot-heading-title.lot-toggle { cursor: pointer; }
 .lot-heading { min-height: 48px; padding: 6px 10px 6px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f4; cursor: grab; }
 .lot-heading:active { cursor: grabbing; }
 .lot-card.reordering { opacity: .5; }
@@ -211,25 +202,6 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .add-location-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto; align-items: flex-end; gap: 8px; padding-top: 15px; border-top: 1px solid #edf0f4; }
 .add-location-form label { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 6px; color: #44566f; font-size: 12px; font-weight: 650; }
 .add-location-form .primary-button { flex: none; padding: 10px 12px; }
-.franchise-form { padding: 24px; }
-.franchise-form > .muted { line-height: 1.6; margin: 8px 0 16px; }
-.franchise-list { display: grid; gap: 8px; max-height: min(35vh, 300px); overflow: auto; padding: 2px; }
-.franchise-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px; border: 1px solid var(--border); border-radius: 9px; }
-.franchise-row > div { min-width: 0; display: grid; gap: 4px; }
-.franchise-row strong { overflow-wrap: anywhere; font-size: 13px; }
-.franchise-row span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.franchise-row .franchise-active { color: #31815f; }
-.franchise-row .franchise-suspended { color: #b44d48; font-weight: 700; }
-.franchise-row button { flex: none; padding: 8px 10px; }
-.franchise-row-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.franchise-delete-confirm { grid-column: 1 / -1; display: grid; gap: 8px; width: 100%; padding-top: 8px; border-top: 1px solid var(--border); }
-.franchise-delete-confirm > span { font-size: 11px; line-height: 1.5; color: #a63e36; }
-.franchise-delete-confirm input { width: 100%; min-width: 0; border: 1px solid #d9e2e9; border-radius: 8px; padding: 9px 11px; }
-.franchise-delete-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-.add-franchise-form { display: grid; gap: 9px; padding-top: 15px; border-top: 1px solid #edf0f4; }
-.add-franchise-form label { display: grid; gap: 6px; color: #44566f; font-size: 12px; font-weight: 650; }
-.add-franchise-form input { width: 100%; border: 1px solid #d9e2e9; border-radius: 8px; padding: 9px 11px; color: var(--ink); }
-.add-franchise-form .primary-button { justify-self: start; margin-top: 3px; }
 .status-form { padding: 24px; }
 .status-form > .muted { line-height: 1.6; margin: 8px 0 16px; }
 .status-manager-list { display: grid; gap: 8px; max-height: min(45vh, 360px); overflow: auto; padding: 2px; }
@@ -356,12 +328,8 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
   .form-row .inline-manage-button { justify-self: start; margin: 0 0 8px; }
   .vehicle-form { padding: 20px; }
   .location-form { padding: 20px; }
-  .franchise-form { padding: 20px; }
-  .status-form { padding: 20px; }
+    .status-form { padding: 20px; }
   .assessment-manager { padding: 20px; }
-  .franchise-row { align-items: flex-start; padding: 9px; }
-  .franchise-row button { font-size: 11px; padding: 8px; }
-  .add-franchise-form .primary-button { width: 100%; }
   .location-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, auto); gap: 5px; }
   .location-row input:nth-child(1), .location-row input:nth-child(2) { grid-column: 1 / -1; }
   .location-row .primary-button, .location-row .danger-button { padding: 8px 9px; font-size: 11px; }
@@ -390,10 +358,7 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
   .danger-button { margin-right: auto; }
   .filter-row { gap: 6px; }
   .filter-button { font-size: 11px; padding: 8px 9px; }
-  .franchise-row { flex-wrap: wrap; }
-  .franchise-row > div { flex: 1 1 100%; }
-  .franchise-row-actions { width: 100%; justify-content: flex-start; }
-}
+      }
 
 .hint { color: #9aa6b5; font-weight: 500; font-size: 11px; margin-left: 4px; }
 .job-time-field { display: grid; gap: 8px; min-width: 0; }
@@ -405,8 +370,6 @@ dialog::backdrop { background: #14283d77; backdrop-filter: blur(2px); }
 .job-time-inputs { position: relative; display: flex; gap: 6px; }
 .job-time-inputs #job-time-text { flex: 1; }
 .job-time-picker { position: absolute; z-index: 1; top: 0; right: 0; width: 44px; height: 100%; padding: 0; opacity: .01; pointer-events: auto; cursor: pointer; }
-.language-select { border: 1px solid #d9e2e9; border-radius: 8px; background: #fff; color: var(--ink); padding: 7px 9px; font-size: 16px; }
-.login-language { position: fixed; top: 14px; right: 14px; z-index: 5; }
 .login-screen { position: relative; }
 .dialog-heading { position: sticky; top: 0; z-index: 20; background: #fff; padding: 18px 0 10px; margin: 0 0 4px; border-bottom: 1px solid var(--border); }
 .heading-actions { display: flex; align-items: center; gap: 8px; }
@@ -510,11 +473,7 @@ dialog > :is(form, div):first-child { padding-top: 0; }
 }
 
 @media (max-width: 640px) {
-  .parking-toolbar { flex-direction: column; }
-  .parking-bulk-actions { width: 100%; }
-  .parking-bulk-actions .quiet-button { flex: 1; min-height: 40px; font-size: 12px; }
-  .lot-jump-chip { min-height: 40px; padding: 8px 12px; font-size: 12px; }
-  .lot-control, .lot-collapse-control { min-width: 40px; min-height: 40px; }
+          .lot-control, .lot-collapse-control { min-width: 40px; min-height: 40px; }
   .lot-control { font-size: 12px; }
   .lot-heading { gap: 8px; }
   .lot-controls { gap: 6px; }

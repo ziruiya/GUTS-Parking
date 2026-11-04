@@ -270,7 +270,6 @@ test("logs in with hashed credentials and seeds thirteen peer locations", async 
     version: appVersion,
     username: "operator",
     can_manage: true,
-    can_manage_franchises: true,
     tenant_name: "本店",
   });
   assert.equal(login.body.can_manage, true);
@@ -680,7 +679,6 @@ test("operator accounts can add vehicles and manage locations without admin sett
     version: appVersion,
     username: "staff",
     can_manage: false,
-    can_manage_franchises: false,
     tenant_name: "本店",
   });
   assert.equal((await staffAgent.get("/api/bootstrap")).status, 200);
@@ -705,7 +703,7 @@ test("operator accounts can add vehicles and manage locations without admin sett
   assert.equal(adminStatus.status, 201);
   assert.equal((await staffAgent.delete(`/api/statuses/${adminStatus.body.id}`)).status, 403);
   assert.equal((await agent.delete(`/api/statuses/${adminStatus.body.id}`)).status, 204);
-  assert.equal((await staffAgent.delete("/api/franchises/2").send({ confirmation_name: "anything" })).status, 403);
+  assert.equal((await staffAgent.delete("/api/franchises/2").send({ confirmation_name: "anything" })).status, 404);
   assert.equal((await staffAgent.put("/api/parking-lots/order").send({
     ids: Array.from({ length: 13 }, (_, index) => index + 1),
   })).status, 200);
@@ -715,173 +713,31 @@ test("operator accounts can add vehicles and manage locations without admin sett
   assert.equal(updated.body.no_fuel, true);
 });
 
-test("headquarters can create isolated franchise stores and suspend or restore access", async () => {
-  const headquartersOnlyStatus = await agent.post("/api/statuses")
-    .send({ name: "本店専用ステータス" });
-  assert.equal(headquartersOnlyStatus.status, 201);
-  const headquartersOnlyField = await agent.post("/api/assessment-fields").send({
-    name: "本店専用チェック",
-    field_type: "checkbox",
-  });
-  assert.equal(headquartersOnlyField.status, 201);
-  const headquartersOnlyDamage = await agent.post("/api/damage-types").send({
-    name: "本店専用損傷",
-  });
-  assert.equal(headquartersOnlyDamage.status, 201);
+test("franchise management is removed and non-headquarters accounts cannot sign in", async () => {
+  assert.equal((await agent.get("/api/franchises")).status, 404);
   assert.equal((await agent.post("/api/franchises").send({
     name: "東店",
     username: "east-admin",
     password: "franchise-password-strong",
-  })).status, 201);
-  const franchise = (await agent.get("/api/franchises")).body.franchises.find((store) => store.name === "東店");
-  assert.ok(franchise);
-  assert.equal(franchise.is_active, true);
-  assert.equal(franchise.admin_usernames, "east-admin");
-  assert.equal((await agent.post("/api/franchises").send({
-    name: "東店",
-    username: "east-admin-2",
-    password: "franchise-password-strong",
-  })).status, 409);
-  assert.equal((await agent.post("/api/franchises").send({
-    name: "短密碼店",
-    username: "short-password",
-    password: "short",
-  })).status, 422);
+  })).status, 404);
+  assert.equal((await agent.patch("/api/franchises/2/status").send({ is_active: false })).status, 404);
+  assert.equal((await agent.delete("/api/franchises/2").send({ confirmation_name: "anything" })).status, 404);
 
-  const franchiseAgent = request.agent(server);
-  const login = await franchiseAgent.post("/api/login").send({
-    username: "east-admin",
-    password: "franchise-password-strong",
-  });
-  assert.equal(login.status, 200);
-  assert.equal(login.body.tenant_name, "東店");
-  assert.equal(login.body.can_manage, true);
-  assert.equal(login.body.can_manage_franchises, false);
-  const franchiseCookie = login.headers["set-cookie"][0].split(";")[0];
-  const headquartersBoard = (await agent.get("/api/bootstrap")).body;
-  const franchiseBoard = (await franchiseAgent.get("/api/bootstrap")).body;
-  assert.equal(headquartersBoard.parking_lots.length, 13);
-  assert.equal(franchiseBoard.parking_lots.length, 13);
-  assert.equal(new Set(franchiseBoard.parking_lots.map((lot) => lot.name)).size, 13);
-  assert.equal(franchiseBoard.vehicles.length, 0);
-  assert.deepEqual(franchiseBoard.vehicle_models
-    .filter((model) => model.vehicle_type === "A-1").map((model) => model.name), ["ミニカ", "アルト", "ミラ"]);
-  assert.equal(franchiseBoard.statuses.some((status) =>
-    status.id === headquartersOnlyStatus.body.id), false);
-  assert.equal(franchiseBoard.assessment_fields.some((field) =>
-    field.id === headquartersOnlyField.body.id), false);
-  assert.equal(franchiseBoard.damage_types.some((type) =>
-    type.id === headquartersOnlyDamage.body.id), false);
-  assert.equal(franchiseBoard.vehicle_options.some((option) => option.name === "ドラレコ"), false);
-  assert.ok(franchiseBoard.vehicle_options.some((option) => option.name === "ETC"));
-  const franchiseOption = await franchiseAgent.post("/api/vehicle-options").send({ name: "東店専用装備" });
-  assert.equal(franchiseOption.status, 201);
-  assert.equal((await agent.get("/api/bootstrap")).body.vehicle_options
-    .some((option) => option.id === franchiseOption.body.id), false);
-  assert.equal((await agent.patch(`/api/vehicles/${vehicleId}`).send({
-    parking_lot_id: franchiseBoard.parking_lots[0].id,
-  })).status, 422);
-  const franchiseMarking = [{
-    id: "franchise-boundary",
-    color: "#336699",
-    x1: 0.1,
-    y1: 0.1,
-    x2: 0.9,
-    y2: 0.9,
-  }];
-  assert.equal((await franchiseAgent.patch(`/api/parking-lots/${franchiseBoard.parking_lots[0].id}`)
-    .send({ markings: franchiseMarking })).status, 200);
-  assert.deepEqual(
-    (await franchiseAgent.get("/api/bootstrap")).body.parking_lots[0].markings,
-    franchiseMarking,
-  );
-  assert.deepEqual((await agent.get("/api/bootstrap")).body.parking_lots[0].markings, []);
-
-  const franchiseVehicle = await franchiseAgent.post("/api/vehicles").send({
-    plate: "東店 500 あ 0001",
-    vehicle_type: "A-1",
-  });
-  assert.equal(franchiseVehicle.status, 201);
-  assert.equal((await franchiseAgent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({
-    status_ids: [headquartersOnlyStatus.body.id],
-  })).status, 422);
-  assert.equal((await franchiseAgent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({
-    assessment_values: { [headquartersOnlyField.body.id]: true },
-  })).status, 422);
-  assert.equal((await franchiseAgent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({
-    inspection_marks: [{
-      id: "foreign-tenant-mark",
-      damage_type_id: headquartersOnlyDamage.body.id,
-      x: 0.4,
-      y: 0.6,
-    }],
-  })).status, 422);
-  const franchiseStatus = await franchiseAgent.post("/api/statuses")
-    .send({ name: "東店専用ステータス" });
-  assert.equal(franchiseStatus.status, 201);
-  assert.equal((await franchiseAgent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({
-    status_ids: [franchiseStatus.body.id],
-  })).status, 200);
-  assert.equal((await agent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({ no_fuel: true })).status, 404);
-  assert.equal((await franchiseAgent.patch(`/api/vehicles/${vehicleId}`).send({ no_fuel: true })).status, 404);
-  assert.equal((await franchiseAgent.delete(`/api/vehicles/${vehicleId}`)).status, 404);
-  assert.equal((await franchiseAgent.get("/api/franchises")).status, 403);
-  assert.equal((await franchiseAgent.delete(`/api/parking-lots/${headquartersBoard.parking_lots[0].id}`)).status, 404);
-  assert.equal(
-    (await agent.get("/api/bootstrap")).body.vehicles.some((vehicle) => vehicle.plate === "東店 500 あ 0001"),
-    false,
-  );
-
-  const headquartersSocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws`, {
-    headers: { Cookie: sessionCookie, Origin: baseUrl },
-  });
-  const franchiseSocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws`, {
-    headers: { Cookie: franchiseCookie, Origin: baseUrl },
-  });
-  await Promise.all([once(headquartersSocket, "open"), once(franchiseSocket, "open")]);
-  const headquartersUnexpectedMessage = new Promise((resolve) =>
-    headquartersSocket.once("message", () => resolve("message")));
-  const franchiseMessage = once(franchiseSocket, "message");
-  await franchiseAgent.patch(`/api/vehicles/${franchiseVehicle.body.id}`).send({ no_fuel: true });
-  assert.deepEqual(JSON.parse((await franchiseMessage)[0].toString()), { type: "refresh" });
-  assert.equal(await Promise.race([
-    headquartersUnexpectedMessage,
-    new Promise((resolve) => setTimeout(() => resolve("quiet"), 50)),
-  ]), "quiet");
-
-  const franchiseSocketClosed = once(franchiseSocket, "close");
-  const suspended = await agent.patch(`/api/franchises/${franchise.id}/status`).send({ is_active: false });
-  assert.equal(suspended.status, 200);
-  assert.equal(suspended.body.is_active, false);
-  const [suspensionCode] = await franchiseSocketClosed;
-  assert.equal(suspensionCode, 4003);
-  assert.equal((await franchiseAgent.get("/api/bootstrap")).status, 403);
+  // A legacy non-headquarters tenant left in the database keeps its stored
+  // data, but its accounts can no longer sign in or use the API.
+  const legacyTenant = application.db.prepare(
+    "INSERT INTO tenants (name, is_headquarters, is_active) VALUES ('旧加盟店', 0, 1)",
+  ).run();
+  const legacyTenantId = Number(legacyTenant.lastInsertRowid);
+  application.db.prepare(
+    "INSERT INTO users (username, password_hash, role, tenant_id) VALUES (?, ?, 'admin', ?)",
+  ).run("legacy-admin", await hashPassword("legacy-password-strong"), legacyTenantId);
   assert.equal((await request(server).post("/api/login").send({
-    username: "east-admin",
-    password: "franchise-password-strong",
+    username: "legacy-admin",
+    password: "legacy-password-strong",
   })).status, 403);
-  assert.equal((await agent.patch(`/api/franchises/${franchise.id}/status`).send({ is_active: true })).status, 200);
-  assert.equal((await franchiseAgent.get("/api/bootstrap")).status, 200);
-  assert.equal((await agent.delete(`/api/franchises/${franchise.id}`)
-    .send({ confirmation_name: "wrong name" })).status, 422);
-  const deletionSocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws`, {
-    headers: { Cookie: franchiseCookie, Origin: baseUrl },
-  });
-  await once(deletionSocket, "open");
-  const deletionSocketClosed = once(deletionSocket, "close");
-  assert.equal((await agent.delete(`/api/franchises/${franchise.id}`)
-    .send({ confirmation_name: franchise.name })).status, 204);
-  const [deletionCode] = await deletionSocketClosed;
-  assert.equal(deletionCode, 4004);
-  assert.equal((await agent.delete(`/api/statuses/${headquartersOnlyStatus.body.id}`)).status, 204);
-  assert.equal((await agent.delete(`/api/assessment-fields/${headquartersOnlyField.body.id}`)).status, 204);
-  assert.equal((await agent.delete(`/api/damage-types/${headquartersOnlyDamage.body.id}`)).status, 204);
-  assert.equal((await franchiseAgent.get("/api/bootstrap")).status, 401);
-  assert.equal(application.db.prepare("SELECT 1 FROM tenants WHERE id = ?").get(franchise.id), undefined);
-  assert.equal(application.db.prepare("SELECT 1 FROM vehicles WHERE tenant_id = ?").get(franchise.id), undefined);
-  const headquartersSocketClosed = once(headquartersSocket, "close");
-  headquartersSocket.close();
-  await headquartersSocketClosed;
+  assert.ok(application.db.prepare("SELECT 1 FROM tenants WHERE id = ?").get(legacyTenantId));
+  assert.ok(application.db.prepare("SELECT 1 FROM users WHERE username = 'legacy-admin'").get());
 });
 
 test("rejects cross-origin changes and broadcasts edits only to authenticated websockets", async () => {
@@ -1297,33 +1153,40 @@ test("deletes empty parking locations but protects occupied locations and tenant
   assert.equal(afterReserveRemoval.status, 201);
   assert.equal(afterReserveRemoval.body.parking_lot_id,
     (await agent.get("/api/bootstrap")).body.parking_lots[0].id);
-  const lastLocationStore = await agent.post("/api/franchises").send({
-    name: "最後の位置検証店",
-    username: "last-location-admin",
-    password: "franchise-password-strong",
+  // The "never delete a tenant's last location" rule is exercised on a
+  // throwaway instance so the shared board keeps its locations.
+  const isolated = createApplication({
+    databasePath: ":memory:",
+    sessionSecret: "test-only-session-secret-value-123456",
   });
-  const lastLocationAgent = request.agent(server);
-  await lastLocationAgent.post("/api/login").send({
-    username: "last-location-admin",
-    password: "franchise-password-strong",
-  });
-  const storeLots = (await lastLocationAgent.get("/api/bootstrap")).body.parking_lots;
-  for (const location of storeLots.slice(0, -1)) {
-    assert.equal((await lastLocationAgent.delete(`/api/parking-lots/${location.id}`)).status, 204);
+  try {
+    isolated.db.prepare("INSERT INTO users (username, password_hash, tenant_id) VALUES (?, ?, 1)").run(
+      "isolated-admin",
+      await hashPassword("isolated-password-strong"),
+    );
+    const isolatedAgent = request.agent(isolated.app);
+    assert.equal((await isolatedAgent.post("/api/login").send({
+      username: "isolated-admin",
+      password: "isolated-password-strong",
+    })).status, 200);
+    const storeLots = (await isolatedAgent.get("/api/bootstrap")).body.parking_lots;
+    assert.equal(storeLots.length, 13);
+    for (const location of storeLots.slice(0, -1)) {
+      assert.equal((await isolatedAgent.delete(`/api/parking-lots/${location.id}`)).status, 204);
+    }
+    assert.equal((await isolatedAgent.delete(`/api/parking-lots/${storeLots.at(-1).id}`)).status, 409);
+  } finally {
+    isolated.db.close();
   }
-  assert.equal((await lastLocationAgent.delete(`/api/parking-lots/${storeLots.at(-1).id}`)).status, 409);
-  assert.equal((await agent.delete(`/api/franchises/${lastLocationStore.body.franchise.id}`)
-    .send({ confirmation_name: "最後の位置検証店" })).status, 204);
-  const franchise = await agent.post("/api/franchises").send({
-    name: "位置削除検証店",
-    username: "lot-delete-admin",
-    password: "franchise-password-strong",
-  });
-  assert.equal(franchise.status, 201);
-  const franchiseLot = application.db.prepare(
-    "SELECT id FROM parking_lots WHERE tenant_id = ? ORDER BY id LIMIT 1",
-  ).get(franchise.body.franchise.id);
-  assert.equal((await agent.delete(`/api/parking-lots/${franchiseLot.id}`)).status, 404);
+  // Cross-tenant protection: a headquarters admin cannot delete a location
+  // that belongs to another tenant still stored in the database.
+  const legacyTenant = application.db.prepare(
+    "INSERT INTO tenants (name, is_headquarters, is_active) VALUES ('位置削除検証店', 0, 1)",
+  ).run();
+  const legacyLot = application.db.prepare(
+    "INSERT INTO parking_lots (tenant_id, name, display_order) VALUES (?, '検証用位置', 0)",
+  ).run(Number(legacyTenant.lastInsertRowid));
+  assert.equal((await agent.delete(`/api/parking-lots/${Number(legacyLot.lastInsertRowid)}`)).status, 404);
 });
 
 test("flattens previous board sections into peer locations without losing vehicle data", () => {
@@ -1545,37 +1408,11 @@ test("reopening an established tenant database preserves parking lots and every 
   }
 });
 
-test("translates the interface to Chinese and English without altering Japanese", () => {
+test("ships a Japanese-only interface with no language switcher", () => {
   const html = fs.readFileSync(path.join(__dirname, "../static/index.html"), "utf8");
-  assert.doesNotMatch(html, /class="eyebrow"/);
-  assert.match(html, /class="language-select"/);
-  assert.match(html, /\/static\/i18n\.js/);
-  const window = { confirm: () => true };
-  const context = vm.createContext({
-    window,
-    document: { readyState: "loading", addEventListener() {} },
-    MutationObserver: class { observe() {} },
-    Node: {}, NodeFilter: {}, localStorage: {},
-  });
-  vm.runInContext(fs.readFileSync(path.join(__dirname, "../static/i18n.js"), "utf8"), context);
-  const { translate } = window.gutsI18n;
-  assert.equal(translate("ジョブ", "ja"), "ジョブ");
-  assert.equal(translate("ジョブ", "en"), "Dispatch");
-  assert.equal(translate("点検", "zh"), "点检");
-  assert.equal(translate("タスク", "en"), "Tasks");
-  assert.equal(translate("車検満了日", "zh"), "车检到期日");
-  assert.equal(translate("ステータス別の車両", "en"), "Follow-up");
-  assert.equal(translate("車両一覧", "zh"), "车辆一览");
-  assert.equal(translate("3 台", "en"), "3 vehicles");
-  assert.equal(translate("  ジョブはありません。 ", "zh"), "  没有任务。 ");
-  assert.equal(translate("駐車場 1 · H-2", "en"), "Lot 1 · H-2");
-  assert.equal(translate("すべて折りたたむ", "zh"), "全部折叠");
-  assert.equal(translate("すべて展開", "en"), "Expand all");
-  assert.equal(translate("駐車場を折りたたむ", "en"), "Collapse parking lot");
-  assert.equal(translate("駐車場を展開する", "zh"), "展开停车场");
-  assert.equal(translate("駐車場へ移動", "en"), "Jump to parking lot");
-  assert.equal(translate("ユーザー固有の名前", "en"), "ユーザー固有の名前");
-  assert.match(translate("通信エラー 線はサーバーに保存されていません。", "en"), /not saved/);
+  assert.doesNotMatch(html, /language-select/);
+  assert.doesNotMatch(html, /i18n\.js/);
+  assert.equal(fs.existsSync(path.join(__dirname, "../static/i18n.js")), false);
 });
 
 test("wires catalog search, token blink and labelled job time inputs", () => {
@@ -1604,17 +1441,20 @@ test("wires catalog search, token blink and labelled job time inputs", () => {
   assert.match(css, /@media \(max-width: 560px\)[\s\S]*?\.topbar-actions\s*\{[^}]*flex-wrap:\s*wrap/);
 });
 
-test("wires persistent parking lot collapse, quick jumps, debounced refresh and touch-safe form sizes", () => {
+test("wires per-lot title-click collapse, debounced refresh and touch-safe form sizes", () => {
   const html = fs.readFileSync(path.join(__dirname, "../static/index.html"), "utf8");
   const script = fs.readFileSync(path.join(__dirname, "../static/app.js"), "utf8");
   const css = fs.readFileSync(path.join(__dirname, "../static/style.css"), "utf8");
-  assert.match(html, /id="parking-shortcuts"/);
-  assert.match(html, /id="collapse-all-lots"/);
-  assert.match(html, /id="expand-all-lots"/);
+  assert.doesNotMatch(html, /id="parking-shortcuts"/);
+  assert.doesNotMatch(html, /id="collapse-all-lots"/);
+  assert.doesNotMatch(html, /id="expand-all-lots"/);
+  assert.doesNotMatch(html, /franchise/);
   assert.match(script, /guts-collapsed-lots:/);
   assert.match(script, /collapsedLotIds\.has\(String\(lot\.id\)\)/);
-  assert.match(script, /function jumpToLot\(lotId\)/);
-  assert.match(script, /scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/);
+  assert.doesNotMatch(script, /jumpToLot|setAllLotsCollapsed|renderParkingShortcuts/);
+  assert.match(script, /lot-heading-title lot-toggle/);
+  assert.match(script, /headingTitle\.addEventListener\("click"/);
+  assert.doesNotMatch(script, /can_manage_franchises|\/api\/franchises/);
   assert.match(script, /collapsedHeading/);
   assert.match(script, /scheduleBoardRefresh/);
   assert.match(script, /}, 250\)/);
@@ -1622,7 +1462,6 @@ test("wires persistent parking lot collapse, quick jumps, debounced refresh and 
   assert.match(script, /if \(dragged \|\| resizing \|\| draftMarking\) return/);
   assert.match(css, /\.lot-card\.is-collapsed \.lot-area,\s*\.lot-card\.is-collapsed \.lot-drawing-tools/);
   assert.match(css, /\.catalog-search[^}]*font-size:\s*16px/);
-  assert.match(css, /\.language-select[^}]*font-size:\s*16px/);
   assert.match(css, /\.priority-editor select[^}]*font-size:\s*16px/);
   assert.match(css, /\.assessment-notes-field textarea[^}]*font-size:\s*16px/);
   assert.match(css, /\.add-task-form input,\s*\.add-task-form textarea[^}]*font-size:\s*16px/);
