@@ -46,6 +46,7 @@
   let socket;
   let dragged = null;
   let wheelTarget = null;
+  let pendingFocus = null;
   let wheelGeom = null;
   const dropWheel = document.querySelector("#drop-wheel");
   const dropWheelItems = document.querySelector("#drop-wheel-items");
@@ -212,7 +213,13 @@
       }
     }
     window.requestAnimationFrame(() => {
-      window.scrollTo(scrollX, scrollY);
+      const focus = pendingFocus;
+      pendingFocus = null;
+      if (focus && Date.now() - focus.at < 4000) {
+        focusMovedVehicle(focus.vehicleId, focus.lotId);
+      } else {
+        window.scrollTo(scrollX, scrollY);
+      }
       if (catalogContent) catalogContent.scrollTop = catalogScrollTop;
     });
   }
@@ -782,6 +789,7 @@
 
   function startDrag(event) {
     if (event.button !== 0 || dragged) return;
+    pendingFocus = null;
     event.preventDefault();
     const token = event.currentTarget;
     const ghost = token.cloneNode(true);
@@ -988,8 +996,8 @@
       } catch (error) {
         showError(error);
       }
+      if (wheelDropped) pendingFocus = { vehicleId: current.id, lotId: wheelLot.id, at: Date.now() };
       await loadBoard();
-      if (wheelDropped) focusMovedVehicle(current.id, wheelLot.id);
       window.setTimeout(() => { suppressClick = false; }, 0);
       return;
     }

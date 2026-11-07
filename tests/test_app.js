@@ -1462,7 +1462,10 @@ test("wires per-lot heading-click collapse, drag drop-wheel, debounced refresh a
   assert.match(script, /parking_lot_id: wheelLot\.id/);
   assert.match(script, /wheel: event\.pointerType !== "mouse"/);
   assert.match(script, /function focusMovedVehicle\(vehicleId, lotId\)/);
-  assert.match(script, /if \(wheelDropped\) focusMovedVehicle\(current\.id, wheelLot\.id\)/);
+  assert.match(script, /if \(wheelDropped\) pendingFocus = \{ vehicleId: current\.id, lotId: wheelLot\.id, at: Date\.now\(\) \}/);
+  assert.match(script, /const focus = pendingFocus;/);
+  assert.match(script, /focusMovedVehicle\(focus\.vehicleId, focus\.lotId\)/);
+  assert.match(css, /\.lot-card \{ scroll-margin-top: 84px; \}/);
   assert.match(script, /just-moved/);
   assert.match(css, /\.vehicle-token\.just-moved/);
   assert.match(css, /\.drop-wheel-disc[^}]*height:\s*min\(94dvh/);
